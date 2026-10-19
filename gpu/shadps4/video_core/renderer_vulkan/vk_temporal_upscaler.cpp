@@ -56,6 +56,10 @@ FfxVkPortableImage Describe(vk::Image image, vk::Format format, u32 width, u32 h
 /// the upscaler's images of the next BB_DUMP_FRAMES (8) frames as raw files
 /// <dir>/fNNN_<name>_<w>x<h>_<format>.raw, for checking temporal stability offline.
 /// Returns the frame number to dump, or -1.
+#ifdef _WIN32
+extern "C" int bb_key_pressed(int vk);
+#endif
+
 int DumpFrame() {
     static const char* trigger = std::getenv("BB_DUMP_TRIGGER");
     static int remaining = 0, index = 0, polls = 0;
@@ -63,12 +67,20 @@ int DumpFrame() {
         return -1;
     }
     if (remaining == 0) {
-        if (++polls % 30 != 0 || std::remove(trigger) != 0) {
+#ifdef _WIN32
+        // TOport: F10 in the game window dumps too (catching a moment by hand).
+        const bool key = bb_key_pressed(0x79 /* VK_F10 */) != 0;
+#else
+        const bool key = false;
+#endif
+        if (!key && (++polls % 30 != 0 || std::remove(trigger) != 0)) {
             return -1;
         }
+        std::printf("Upscaler: dumping frames%s\n", key ? " (F10)" : "");
+        std::fflush(stdout);
         const char* frames = std::getenv("BB_DUMP_FRAMES");
         remaining = frames ? std::max(1, std::atoi(frames)) : 8;
-        index = 0;
+        // Numbering continues: each F10 press adds frames beside the previous ones.
     }
     --remaining;
     return index++;
