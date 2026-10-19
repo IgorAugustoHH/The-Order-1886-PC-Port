@@ -110,6 +110,8 @@ photo_camera=1
 fast_loading=1
 preload_shaders=1
 fps_limit=60
+order_output=1080
+order_upscaler=dlss
 '''
 
 
@@ -154,6 +156,14 @@ def toport_environment(env, config):
         env.setdefault('BB_ORDER_RESOLUTION', resolution)
     if resolution == '2160':
         env.setdefault('BB_GAME_ARGS', '-use4K')
+    # Output above the game's 1080p: the finished frame is upscaled to it (the game keeps its
+    # own resolution); the anti-aliasing mode then picks whether the game's TAA stays.
+    output = {'1440': '2560x1440', '2160': '3840x2160'}.get(setting('order_output', '1080'))
+    if output:
+        env.setdefault('BB_ORDER_OUTPUT', output)
+        env.setdefault('BB_ORDER_UPSCALER', setting('order_upscaler', 'dlss'))
+        if aa == 'game':
+            env.setdefault('BB_ORDER_OUTPUT_GAME_TAA', '1')
     env.setdefault('BB_LANGUAGE', setting('game_language', '17'))
     env.setdefault('BB_ORDER_PHOTO_CAMERA_UNLOCK', setting('photo_camera', '1'))
     if setting('fast_loading', '1') == '1':

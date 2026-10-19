@@ -212,6 +212,9 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
     if (SceneResolution::OrderUpscaling()) {
         order_mode = true;
         enabled = true;
+        // The game's TAA kept before the upscaler: no jitter (it would blur it).
+        const char* game_taa = std::getenv("BB_ORDER_OUTPUT_GAME_TAA");
+        order_jitter = !(game_taa && game_taa[0] == '1');
         target_width = SceneResolution::OrderOutput().width;
         target_height = SceneResolution::OrderOutput().height;
         const char* name = std::getenv("BB_ORDER_UPSCALER");
@@ -287,6 +290,12 @@ bool TemporalUpscaler::RasterScaling() const {
     return !order_mode && !scaled_session && scene_targets.Reduced() && !done_this_frame;
 }
 
+bool TemporalUpscaler::OrderSceneDepth(const VideoCore::Image& depth) {
+    const auto game = SceneResolution::GameSize();
+    return depth.info.num_samples > 1 && depth.info.size.width == game.width &&
+           depth.info.size.height == game.height;
+}
+
 bool TemporalUpscaler::OnFrameStart() {
     if (order_mode) {
         // A frame without UI draws: its finished image is upscaled before its display pass.
@@ -309,7 +318,18 @@ bool TemporalUpscaler::OnFrameStart() {
         ui_read_barrier = false;
         done_this_frame = false;
         ldr_target = {};
-        jitter = {};
+        // Sub-pixel jitter of the scene (viewport offsets, Rasterizer) for the temporal
+        // providers; the menu's jitter switch or toggle 1 << 25 turns it off.
+        const bool jitter_on = order_jitter && Active() && BbSettings::Get().jitter &&
+                               !BbToggle::Disabled(1u << 25);
+        if (!jitter_on) {
+            jitter = {};
+            return false;
+        }
+        const auto game = SceneResolution::GameSize();
+        const u32 phases = Motion::JitterPhases(game.width, OrderOutSize(game.width, 0)[0]);
+        jitter_index = jitter_index % phases + 1;
+        jitter = {Halton(jitter_index, 2) - 0.5f, Halton(jitter_index, 3) - 0.5f};
         return false;
     }
     auto& status = BbSettings::Get();

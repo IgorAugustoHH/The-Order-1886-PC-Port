@@ -68,6 +68,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
                 v.order_aa = m;
             }
         }
+    } else if (key == "order_output") {
+        v.order_output = i == 2160 ? 2160 : i == 1440 ? 1440 : 1080;
+    } else if (key == "order_upscaler") {
+        v.order_upscaler = value == "fsr3"     ? UpscalerFsr3
+                           : value == "fsr4"   ? UpscalerFsr4
+                           : value == "fsr411" ? UpscalerFsr411
+                           : value == "off"    ? UpscalerOff
+                                               : UpscalerDlss;
     } else if (key == "order_resolution") {
         v.order_resolution = value == "retail" ? 800 : i == 720 ? 720 : 1080;
     } else if (key == "game_language") {
@@ -156,6 +164,8 @@ void Load() {
     v.startup_live_resolution = v.live_resolution;
     v.startup_order_aa = v.order_aa;
     v.startup_order_resolution = v.order_resolution;
+    v.startup_order_output = v.order_output;
+    v.startup_order_upscaler = v.order_upscaler;
     v.startup_game_language = v.game_language;
     v.startup_photo_camera = v.photo_camera;
     v.startup_fast_loading = v.fast_loading;
@@ -165,6 +175,8 @@ void Load() {
 bool OrderNeedsRestart() {
     const auto& v = Get();
     return v.order_aa != v.startup_order_aa || v.order_resolution != v.startup_order_resolution ||
+           v.order_output != v.startup_order_output ||
+           (v.order_output != 1080 && v.order_upscaler != v.startup_order_upscaler) ||
            v.game_language != v.startup_game_language ||
            v.photo_camera != v.startup_photo_camera || v.fast_loading != v.startup_fast_loading ||
            v.preload_shaders != v.startup_preload_shaders;
@@ -261,6 +273,13 @@ void Save() {
                  v.game_language.load(),
                  int(v.photo_camera.load()), int(v.fast_loading.load()), v.fps_limit.load(),
                  int(v.preload_shaders.load()), v.ui_english.load() ? "en" : "pt");
+    const int upscaler = v.order_upscaler.load();
+    std::fprintf(file, "order_output=%d\norder_upscaler=%s\n", v.order_output.load(),
+                 upscaler == UpscalerFsr3     ? "fsr3"
+                 : upscaler == UpscalerFsr4   ? "fsr4"
+                 : upscaler == UpscalerFsr411 ? "fsr411"
+                 : upscaler == UpscalerOff    ? "off"
+                                              : "dlss");
     std::fclose(file);
 }
 

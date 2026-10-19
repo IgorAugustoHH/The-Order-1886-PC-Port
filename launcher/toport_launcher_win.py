@@ -134,6 +134,17 @@ def RESOLUTIONS():
             ('720', T('1280 x 720 tela cheia (16:9)', '1280 x 720 full screen (16:9)'))]
 
 
+def OUTPUTS():
+    return [('1080', T('1080p (a resolução do jogo)', "1080p (the game's resolution)")),
+            ('1440', T('1440p (ampliada pelo upscaler)', '1440p (upscaled)')),
+            ('2160', T('4K (ampliada pelo upscaler)', '4K (upscaled)'))]
+
+
+def UPSCALERS():
+    return [('dlss', 'NVIDIA DLSS'), ('fsr3', 'AMD FSR 3.1'), ('fsr4', 'AMD FSR 4'),
+            ('fsr411', 'AMD FSR 4.1.1'), ('off', T('Nenhum (ampliação simples)', 'None (simple scaling)'))]
+
+
 UI_LANGUAGES = [('pt', 'Português'), ('en', 'English')]
 FPS_LIMITS = [('30', '30 FPS'), ('60', '60 FPS'), ('90', '90 FPS'), ('120', '120 FPS')]
 # PS4 system language codes (gpu/shim/bbport_settings.h GameLanguages).
@@ -149,7 +160,7 @@ def DISPLAY_MODES():
             ('2', T('Tela cheia exclusiva', 'Exclusive full screen')), ('0', T('Janela', 'Window'))]
 INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'fps_limit': '60',
                 'game_language': '17', 'photo_camera': '1', 'fast_loading': '1', 'show_fps': '1',
-                'preload_shaders': '1'}
+                'preload_shaders': '1', 'order_output': '1080', 'order_upscaler': 'dlss'}
 INI_FLAGS = ('photo_camera', 'fast_loading', 'show_fps', 'preload_shaders')
 APP_DEFAULTS = {'game_dir': str(PORT_DIR.parent / TITLE_ID), 'display': '1',
                 'close_on_play': False, 'ui_language': UI_LANG}
@@ -166,6 +177,10 @@ def read_ini():
         pass
     if values.get('order_resolution') not in ('retail', '720', '1080'):
         values['order_resolution'] = 'retail'  # 1440p/4K tests left out of the launcher
+    if values.get('order_output') not in ('1080', '1440', '2160'):
+        values['order_output'] = '1080'
+    if values.get('order_upscaler') not in ('dlss', 'fsr3', 'fsr4', 'fsr411', 'off'):
+        values['order_upscaler'] = 'dlss'
     return values
 
 
@@ -652,6 +667,20 @@ class Launcher:
                    'Original: as on PS4, a 2.40:1 scene with black bars and correct lighting '
                    "(recommended). The 16:9 options use illusion0001's patches found in the dump's "
                    'executable; at 1080p their author warns of visual issues.'))
+        self.row(f, T('Resolução de saída', 'Output resolution'), self.choice(f, 'order_output', 'ini', OUTPUTS()),
+                 T('Acima de 1080p, o jogo continua renderizando na própria resolução e o quadro pronto '
+                   'é ampliado pelo upscaler; a interface é desenhada na resolução de saída. Com DLSS ou '
+                   'DLAA no anti-aliasing, o upscaler faz o trabalho temporal; com o TAA original, o TAA '
+                   'do jogo continua antes dele.',
+                   "Above 1080p the game keeps rendering at its own resolution and the finished frame is "
+                   'upscaled; the UI is drawn at the output resolution. With DLSS or DLAA anti-aliasing '
+                   "the upscaler does the temporal work; with the original TAA the game's TAA runs first."))
+        self.row(f, 'Upscaler', self.choice(f, 'order_upscaler', 'ini', UPSCALERS()),
+                 T('Usado quando a resolução de saída é maior que 1080p. DLSS precisa de uma NVIDIA RTX; '
+                   'FSR 4 precisa de uma AMD RX 9000 (ou de suporte a FP8/INT8); FSR 3.1 roda em qualquer '
+                   'placa.',
+                   'Used when the output resolution is above 1080p. DLSS needs an NVIDIA RTX; FSR 4 needs '
+                   'an AMD RX 9000 (or FP8/INT8 support); FSR 3.1 runs on any GPU.'))
 
     def build_display(self):
         f = self.page('display', T('Tela e desempenho', 'Display & performance'),

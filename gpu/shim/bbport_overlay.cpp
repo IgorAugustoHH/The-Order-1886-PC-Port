@@ -229,6 +229,22 @@ void Menu() {
                resolution_names);
     Hint(L("Original: como no PS4, cena em 2.40:1 com faixas pretas, e a iluminação correta. As opções 16:9 usam os patches do illusion0001 que vieram no executável do dump; o autor avisa que 1080p em 16:9 tem problemas visuais. Reinicie para aplicar.", "Original: as on PS4, a 2.40:1 scene with black bars and correct lighting. The 16:9 options use illusion0001's patches found in the dump's executable; their author warns that 16:9 at 1080p has visual issues. Restart to apply."));
 
+    static const int output_values[] = {1080, 1440, 2160};
+    const char* const output_names[] = {L("1080p (a resolução do jogo)", "1080p (the game's resolution)"),
+                                        L("1440p (ampliada pelo upscaler)", "1440p (upscaled)"),
+                                        L("4K (ampliada pelo upscaler)", "4K (upscaled)")};
+    OrderCombo("output", L("Resolução de saída", "Output resolution"), s.order_output, output_values,
+               output_names);
+    if (s.order_output != 1080) {
+        static const int upscaler_values[] = {BbSettings::UpscalerDlss, BbSettings::UpscalerFsr3,
+                                              BbSettings::UpscalerFsr4, BbSettings::UpscalerFsr411,
+                                              BbSettings::UpscalerOff};
+        const char* const upscaler_names[] = {"NVIDIA DLSS", "AMD FSR 3.1", "AMD FSR 4", "AMD FSR 4.1.1",
+                                              L("Nenhum (ampliação simples)", "None (simple scaling)")};
+        OrderCombo("upscaler", "Upscaler", s.order_upscaler, upscaler_values, upscaler_names);
+    }
+    Hint(L("Acima de 1080p, o jogo continua na própria resolução e o quadro pronto é ampliado pelo upscaler; a interface é desenhada na resolução de saída. Reinicie para aplicar.", "Above 1080p the game keeps its own resolution and the finished frame is upscaled; the UI is drawn at the output resolution. Restart to apply."));
+
     ImGui::SeparatorText(L("Desempenho", "Performance"));
     static const unsigned fps_values[] = {30, 60, 90, 120};
     static const char* const fps_names[] = {"30 FPS", "60 FPS", "90 FPS", "120 FPS"};

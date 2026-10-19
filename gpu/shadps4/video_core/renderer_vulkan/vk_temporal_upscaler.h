@@ -76,6 +76,8 @@ public:
     void SetOrderSource(const OrderDlss* source) noexcept {
         order_source = source;
     }
+    /// The Order: a draw of the 3D scene (its multisampled scene-size depth), jittered.
+    [[nodiscard]] static bool OrderSceneDepth(const VideoCore::Image& depth);
     bool RasterScaling() const;
     /// bbport: LOD bias for scene materials, log2(render / output) while a reduced scene is
     /// upscaled (0 at native size, for TAA and without an upscaler).
@@ -236,6 +238,7 @@ private:
     u32 target_width = 1920, target_height = 1080; ///< output size of scaled presets
     u64 ui_trigger_vs = 0x34e8a281;
     bool order_mode = false;
+    bool order_jitter = false;
     const OrderDlss* order_source = nullptr;
     u64 order_prep_seen = 0;
     u64 order_frames = 0;
