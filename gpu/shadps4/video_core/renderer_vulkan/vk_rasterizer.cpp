@@ -1251,17 +1251,27 @@ static bool SkippedSunShadowDraw(const GraphicsPipeline* pipeline, const AmdGpu:
 }
 
 // TOport: The Order: 1886's motion blur is one full-screen pass (PS 0x574764e2) writing the scene
-// from the resolve's output, the velocity and its tile maxima (passes #63-#68). With motion blur
-// off in the menu, the resolve's output is copied to its target instead of drawing it.
-bool Rasterizer::SkipOrderMotionBlur(const GraphicsPipeline* pipeline) {
+// from the resolve's output, the velocity and its tile maxima (passes #63-#68); the depth of
+// field ends in one (PS 0x4bb962d1) writing the post target from the scene and its half-size
+// layers (#70-#76). Switched off in the menu, the pass's full-size input of its own format is
+// copied to its target instead of drawing it.
+bool Rasterizer::SkipOrderPostPass(const GraphicsPipeline* pipeline) {
     constexpr u64 MotionBlurPs = 0x574764e2ull;
-    if (BbSettings::Get().order_motion_blur.load(std::memory_order_relaxed)) {
-        return false;
-    }
+    constexpr u64 DofPs = 0x4bb962d1ull;
     const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
-    if (!ps || ps->pgm_hash != MotionBlurPs || !cb_descs[0].first) {
+    if (!ps || !cb_descs[0].first) {
         return false;
     }
+    const auto& settings = BbSettings::Get();
+    u32 pass = 0;
+    if (ps->pgm_hash == MotionBlurPs && !settings.order_motion_blur.load(std::memory_order_relaxed)) {
+        pass = 1;
+    } else if (ps->pgm_hash == DofPs && !settings.order_dof.load(std::memory_order_relaxed)) {
+        pass = 2;
+    } else {
+        return false;
+    }
+    const char* const name = pass == 1 ? "motion blur" : "depth of field";
     const VideoCore::ImageId target_id = cb_descs[0].first;
     auto& target = texture_cache.GetImage(target_id);
     VideoCore::ImageId source_id{};
@@ -1273,18 +1283,20 @@ bool Rasterizer::SkipOrderMotionBlur(const GraphicsPipeline* pipeline) {
             source_id = id;
         }
     }
-    static bool logged = false;
+    static bool logged[3] = {};
     if (!source_id) {
-        if (!logged) {
-            logged = true;
-            std::printf("TOport: motion blur pass kept (no source image recognized)\n");
+        if (!logged[pass]) {
+            logged[pass] = true;
+            std::printf("TOport: %s pass kept (no source image recognized)\n", name);
+            std::fflush(stdout);
         }
         return false;
     }
-    if (!logged) {
-        logged = true;
-        std::printf("TOport: motion blur off (the resolve's output copied, %ux%u)\n",
+    if (!logged[pass]) {
+        logged[pass] = true;
+        std::printf("TOport: %s off (its input copied, %ux%u)\n", name,
                     target.info.size.width, target.info.size.height);
+        std::fflush(stdout);
     }
     auto& source = texture_cache.GetImage(source_id);
     scheduler.EndRendering();
@@ -1357,7 +1369,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     if (!bound) {
         return;
     }
-    if (SkipOrderMotionBlur(pipeline)) {
+    if (SkipOrderPostPass(pipeline)) {
         return;
     }
     const auto state = BeginRendering(pipeline);

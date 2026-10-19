@@ -159,9 +159,9 @@ def DISPLAY_MODES():
     return [('1', T('Tela cheia sem bordas', 'Borderless full screen')),
             ('2', T('Tela cheia exclusiva', 'Exclusive full screen')), ('0', T('Janela', 'Window'))]
 INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'fps_limit': '60',
-                'game_language': '17', 'photo_camera': '1', 'motion_blur': '1', 'fast_loading': '1', 'show_fps': '1',
+                'game_language': '17', 'photo_camera': '1', 'motion_blur': '1', 'dof': '1', 'fast_loading': '1', 'show_fps': '1',
                 'preload_shaders': '1', 'order_output': '1080', 'order_upscaler': 'dlss'}
-INI_FLAGS = ('photo_camera', 'motion_blur', 'fast_loading', 'show_fps', 'preload_shaders')
+INI_FLAGS = ('photo_camera', 'motion_blur', 'dof', 'fast_loading', 'show_fps', 'preload_shaders')
 APP_DEFAULTS = {'game_dir': str(PORT_DIR.parent / TITLE_ID), 'display': '1',
                 'close_on_play': False, 'ui_language': UI_LANG}
 
@@ -686,6 +686,11 @@ class Launcher:
                      'no menu do jogo (Insert), sem reiniciar.',
                      "The game's blur on moving characters and camera. Can also be switched in the "
                      'in-game menu (Insert) without restarting.'))
+        self.check(f, 'dof', 'ini', T('Profundidade de campo (DoF)', 'Depth of field'),
+                   T('O desfoque do que está fora de foco (fundo, mira, cutscenes). Também pode ser '
+                     'trocado no menu do jogo (Insert), sem reiniciar.',
+                     'The blur of what is out of focus (background, aiming, cutscenes). Can also be '
+                     'switched in the in-game menu (Insert) without restarting.'))
 
     def build_display(self):
         f = self.page('display', T('Tela e desempenho', 'Display & performance'),

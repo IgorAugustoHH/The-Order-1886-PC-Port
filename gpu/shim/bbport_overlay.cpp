@@ -247,6 +247,8 @@ void Menu() {
 
     OrderCheckbox("mblur", L("Desfoque de movimento (motion blur)", "Motion blur"), s.order_motion_blur);
     Hint(L("O borrão do jogo em personagens e câmera em movimento. Vale na hora.", "The game's blur on moving characters and camera. Applies immediately."));
+    OrderCheckbox("dof", L("Profundidade de campo (DoF)", "Depth of field"), s.order_dof);
+    Hint(L("O desfoque do que está fora de foco (fundo, mira, cutscenes). Vale na hora.", "The blur of what is out of focus (background, aiming, cutscenes). Applies immediately."));
 
     ImGui::SeparatorText(L("Desempenho", "Performance"));
     static const unsigned fps_values[] = {30, 60, 90, 120};
