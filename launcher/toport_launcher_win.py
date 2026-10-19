@@ -128,10 +128,33 @@ def AA_MODES():
             ('ultra', T('DLSS Ultra Desempenho', 'DLSS Ultra Performance'))]
 
 
+def AA_MODES_OUTPUT():
+    """Anti-aliasing above 1080p: whether the game's TAA runs before the upscaler."""
+    return [('game', T('TAA original + upscaler (recomendado)', "The game's TAA + upscaler (recommended)")),
+            ('dlaa', T('Pelo upscaler (experimental)', 'By the upscaler (experimental)'))]
+
+
 def RESOLUTIONS():
     return [('retail', T('Original do PS4: 1920 x 800 (2.40:1)', 'PS4 original: 1920 x 800 (2.40:1)')),
             ('1080', T('1920 x 1080 tela cheia (16:9)', '1920 x 1080 full screen (16:9)')),
             ('720', T('1280 x 720 tela cheia (16:9)', '1280 x 720 full screen (16:9)'))]
+
+
+def OUTPUTS():
+    return [('1080', T('1080p (a resolução do jogo)', "1080p (the game's resolution)")),
+            ('1440', T('1440p (ampliada pelo upscaler)', '1440p (upscaled)')),
+            ('2160', T('4K (ampliada pelo upscaler)', '4K (upscaled)'))]
+
+
+def UPSCALERS():
+    # FSR 4 / 4.1.1 stay reachable through bbport.ini (order_upscaler) until tested.
+    return [('dlss', 'NVIDIA DLSS'), ('fsr3', 'AMD FSR 3.1'),
+            ('off', T('Nenhum (ampliação simples)', 'None (simple scaling)'))]
+
+
+def SHARPNESS():
+    return [('0.00', T('Desligada', 'Off')), ('0.15', '15%'), ('0.30', '30%'), ('0.50', '50%'),
+            ('0.75', '75%'), ('1.00', '100%')]
 
 
 UI_LANGUAGES = [('pt', 'Português'), ('en', 'English')]
@@ -148,9 +171,10 @@ def DISPLAY_MODES():
     return [('1', T('Tela cheia sem bordas', 'Borderless full screen')),
             ('2', T('Tela cheia exclusiva', 'Exclusive full screen')), ('0', T('Janela', 'Window'))]
 INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'fps_limit': '60',
-                'game_language': '17', 'photo_camera': '1', 'fast_loading': '1', 'show_fps': '1',
-                'preload_shaders': '1'}
-INI_FLAGS = ('photo_camera', 'fast_loading', 'show_fps', 'preload_shaders')
+                'game_language': '17', 'photo_camera': '1', 'motion_blur': '1', 'dof': '1', 'fast_loading': '1', 'show_fps': '1',
+                'preload_shaders': '1', 'order_output': '1080', 'order_upscaler': 'dlss',
+                'sharpness': '0.30'}
+INI_FLAGS = ('photo_camera', 'motion_blur', 'dof', 'fast_loading', 'show_fps', 'preload_shaders')
 APP_DEFAULTS = {'game_dir': str(PORT_DIR.parent / TITLE_ID), 'display': '1',
                 'close_on_play': False, 'ui_language': UI_LANG}
 
@@ -166,6 +190,17 @@ def read_ini():
         pass
     if values.get('order_resolution') not in ('retail', '720', '1080'):
         values['order_resolution'] = 'retail'  # 1440p/4K tests left out of the launcher
+    if values.get('order_output') not in ('1080', '1440', '2160'):
+        values['order_output'] = '1080'
+    if values.get('order_upscaler') not in ('dlss', 'fsr3', 'fsr4', 'fsr411', 'off'):
+        values['order_upscaler'] = 'dlss'
+    try:  # the in-game slider saves any percentage: shown as the nearest choice
+        sharp = float(values.get('sharpness', '0.30'))
+    except ValueError:
+        sharp = 0.30
+    if values.get('sharpen') == '0':
+        sharp = 0.0
+    values['sharpness'] = min((o for o, _ in SHARPNESS()), key=lambda o: abs(float(o) - sharp))
     return values
 
 
@@ -423,6 +458,29 @@ class Launcher:
         var.trace_add('write', show)
         return box
 
+    def aa_choice(self, parent, width=36):
+        """The anti-aliasing combobox: the DLSS modes at 1080p; above it, only whether the
+        game's TAA runs before the upscaler (the DLSS modes then mean "by the upscaler")."""
+        var = self.var('order_aa', 'ini')
+        output = self.var('order_output', 'ini')
+        box = self.ttk.Combobox(parent, state='readonly', width=width)
+
+        def options():
+            return AA_MODES() if output.get() == '1080' else AA_MODES_OUTPUT()
+
+        def show(*_args):
+            current = var.get()
+            values = [v for v, _t in options()]
+            box.configure(values=[t for _v, t in options()])
+            if current not in values:
+                current = 'game' if current == 'game' else 'dlaa'
+            box.current(values.index(current) if current in values else 0)
+        show()
+        box.bind('<<ComboboxSelected>>', lambda _e: var.set(options()[box.current()][0]))
+        var.trace_add('write', show)
+        output.trace_add('write', show)
+        return box
+
     def next_row(self, parent):
         return parent.grid_size()[1]
 
@@ -578,8 +636,10 @@ class Launcher:
         quick.grid(row=0, column=1, sticky='nw')
         ttk.Label(quick, text=T('Principal', 'Quick settings'), style='Section.TLabel').grid(
             row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
-        self.row(quick, T('Anti-aliasing', 'Anti-aliasing'), self.choice(quick, 'order_aa', 'ini', AA_MODES(), 26))
-        self.row(quick, T('Resolução', 'Resolution'), self.choice(quick, 'order_resolution', 'ini', RESOLUTIONS(), 26))
+        self.row(quick, T('Anti-aliasing', 'Anti-aliasing'), self.aa_choice(quick, 26))
+        self.row(quick, T('Resolução do jogo', 'Game resolution'), self.choice(quick, 'order_resolution', 'ini', RESOLUTIONS(), 26))
+        self.row(quick, T('Resolução de saída', 'Output resolution'), self.choice(quick, 'order_output', 'ini', OUTPUTS(), 26))
+        self.row(quick, 'Upscaler', self.choice(quick, 'order_upscaler', 'ini', UPSCALERS(), 26))
         self.row(quick, T('Limite de quadros', 'Frame limit'), self.choice(quick, 'fps_limit', 'ini', FPS_LIMITS, 26))
         self.row(quick, T('Idioma', 'Game language'), self.choice(quick, 'game_language', 'ini', LANGUAGES, 26))
         self.var('game_dir', 'app').trace_add('write', lambda *_a: (self.refresh_status(), self.draw_banner()))
@@ -637,13 +697,19 @@ class Launcher:
                       T('Salvo em bbport.ini; o menu do jogo (Insert) altera os mesmos valores.',
                         'Saved in bbport.ini; the in-game menu (Insert) changes the same values.'))
         self.section(f, 'Anti-aliasing', top=4)
-        self.row(f, T('Modo', 'Mode'), self.choice(f, 'order_aa', 'ini', AA_MODES()),
-                 T('DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo. DLAA mantém a cena '
-                   'na resolução nativa; os outros modos renderizam a cena menor e reconstroem para a '
-                   'saída (mais FPS). TAA original é o anti-aliasing do PS4.',
-                   "DLSS (NVIDIA RTX) replaces the game's own temporal resolve. DLAA keeps the scene at "
-                   'native resolution; the other modes render a smaller scene and reconstruct it (more '
-                   "FPS). The original TAA is the PS4's anti-aliasing."))
+        self.row(f, T('Modo', 'Mode'), self.aa_choice(f),
+                 T('Em 1080p: DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo; DLAA '
+                   'mantém a cena na resolução nativa, os outros modos renderizam a cena menor e '
+                   'reconstroem (mais FPS); TAA original é o anti-aliasing do PS4. Acima de 1080p: '
+                   '"TAA original + upscaler" (recomendado) roda o TAA do jogo antes e o upscaler '
+                   'amplia; "Pelo upscaler" (experimental) deixa o DLSS ou o FSR 3.1 fazer também o '
+                   'anti-aliasing, mas partes de rostos podem sumir.',
+                   "At 1080p: DLSS (NVIDIA RTX) replaces the game's own temporal resolve; DLAA keeps "
+                   'the scene at native resolution, the other modes render a smaller scene and '
+                   "reconstruct it (more FPS); the original TAA is the PS4's anti-aliasing. Above "
+                   "1080p: \"The game's TAA + upscaler\" (recommended) runs the game's TAA first "
+                   'and the upscaler enlarges; "By the upscaler" (experimental) lets DLSS or FSR 3.1 '
+                   'do the anti-aliasing too, but parts of faces may vanish.'))
         self.section(f, T('Resolução', 'Resolution'))
         self.row(f, T('Resolução do jogo', 'Game resolution'), self.choice(f, 'order_resolution', 'ini', RESOLUTIONS()),
                  T('Original: como no PS4, cena em 2.40:1 com faixas pretas e a iluminação correta '
@@ -652,6 +718,43 @@ class Launcher:
                    'Original: as on PS4, a 2.40:1 scene with black bars and correct lighting '
                    "(recommended). The 16:9 options use illusion0001's patches found in the dump's "
                    'executable; at 1080p their author warns of visual issues.'))
+        output_var = self.var('order_output', 'ini')
+        output_var.previous = output_var.get()
+
+        def output_changed(*_args):
+            # Going above 1080p picks the recommended anti-aliasing there: the game's TAA.
+            if output_var.previous == '1080' and output_var.get() != '1080':
+                self.var('order_aa', 'ini').set('game')
+            output_var.previous = output_var.get()
+        output_var.trace_add('write', output_changed)
+        self.row(f, T('Resolução de saída', 'Output resolution'), self.choice(f, 'order_output', 'ini', OUTPUTS()),
+                 T('Acima de 1080p, o jogo continua renderizando na própria resolução e o quadro pronto '
+                   'é ampliado pelo upscaler; a interface é desenhada na resolução de saída. Com DLSS ou '
+                   'DLAA no anti-aliasing, o upscaler faz o trabalho temporal; com o TAA original, o TAA '
+                   'do jogo continua antes dele.',
+                   "Above 1080p the game keeps rendering at its own resolution and the finished frame is "
+                   'upscaled; the UI is drawn at the output resolution. With DLSS or DLAA anti-aliasing '
+                   "the upscaler does the temporal work; with the original TAA the game's TAA runs first."))
+        self.row(f, 'Upscaler', self.choice(f, 'order_upscaler', 'ini', UPSCALERS()),
+                 T('Usado quando a resolução de saída é maior que 1080p. DLSS precisa de uma NVIDIA RTX; '
+                   'FSR 3.1 roda em qualquer placa.',
+                   'Used when the output resolution is above 1080p. DLSS needs an NVIDIA RTX; FSR 3.1 '
+                   'runs on any GPU.'))
+        self.row(f, T('Nitidez', 'Sharpening'), self.choice(f, 'sharpness', 'ini', SHARPNESS()),
+                 T('Nitidez aplicada depois do upscaler (DLSS ou FSR 3.1), quando a saída é maior que '
+                   '1080p. Também há um controle deslizante no menu do jogo (Insert), que vale na hora.',
+                   'Sharpening applied after the upscaler (DLSS or FSR 3.1) when the output is above '
+                   '1080p. The in-game menu (Insert) has a slider too, applied immediately.'))
+        self.check(f, 'motion_blur', 'ini', T('Desfoque de movimento (motion blur)', 'Motion blur'),
+                   T('O borrão do jogo em personagens e câmera em movimento. Também pode ser trocado '
+                     'no menu do jogo (Insert), sem reiniciar.',
+                     "The game's blur on moving characters and camera. Can also be switched in the "
+                     'in-game menu (Insert) without restarting.'))
+        self.check(f, 'dof', 'ini', T('Profundidade de campo (DoF)', 'Depth of field'),
+                   T('O desfoque do que está fora de foco (fundo, mira, cutscenes). Também pode ser '
+                     'trocado no menu do jogo (Insert), sem reiniciar.',
+                     'The blur of what is out of focus (background, aiming, cutscenes). Can also be '
+                     'switched in the in-game menu (Insert) without restarting.'))
 
     def build_display(self):
         f = self.page('display', T('Tela e desempenho', 'Display & performance'),

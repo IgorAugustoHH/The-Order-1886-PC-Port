@@ -103,12 +103,20 @@ struct Values {
     std::atomic<int> order_resolution{800};      ///< 800 retail (2.40:1), 1080 or 720 16:9
     std::atomic<int> game_language{17};          ///< PS4 system language code (17 pt-BR)
     std::atomic<bool> photo_camera{true};        ///< free photo camera in cutscenes
+    std::atomic<bool> order_motion_blur{true};   ///< the game's motion blur (live)
+    std::atomic<bool> order_dof{true};           ///< the game's depth of field (live)
     std::atomic<bool> fast_loading{true};        ///< compute pipe parts ade + command pipe
     std::atomic<bool> preload_shaders{true};     ///< build last sessions' pipelines at start
     std::atomic<bool> ui_english{false};         ///< menu language: ui_language=en (launcher)
     std::atomic<unsigned> fps_limit{60};         ///< 30/60/90/120; F9 cycles it, applied live
+    /// Output lines (1080: the game's own; 1440, 2160: the finished frame upscaled) and the
+    /// upscaler for it (Upscaler: DLSS, FSR 3.1, FSR 4, FSR 4.1.1 or off for linear scaling).
+    std::atomic<int> order_output{1080};
+    std::atomic<int> order_upscaler{UpscalerDlss};
     int startup_order_aa = OrderAaQuality;
     int startup_order_resolution = 800;
+    int startup_order_output = 1080;
+    int startup_order_upscaler = UpscalerDlss;
     int startup_game_language = 17;
     bool startup_photo_camera = true;
     bool startup_fast_loading = true;
