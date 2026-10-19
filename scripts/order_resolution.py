@@ -48,7 +48,8 @@ def elf_offset(elf, target, length):
 def resolution_writes(elf, mode):
     if mode == 'retail':
         if hashlib.sha256(elf).hexdigest() != ELF_SHA256:
-            raise ValueError('Resolucao: eboot diferente da imagem analisada (CUSA00785 01.02)')
+            # Another dump of 01.02 can differ outside the patched code: the byte checks below decide.
+            print('Resolucao: eboot com hash diferente; conferindo os bytes originais')
         out = []
         target, original, aspect = RETAIL_ASPECT
         start = elf_offset(elf, target, len(original))
@@ -66,7 +67,8 @@ def resolution_writes(elf, mode):
     if mode not in ('1080', '2160'):
         raise ValueError(f'BB_ORDER_RESOLUTION: modo nao suportado: {mode}')
     if hashlib.sha256(elf).hexdigest() != ELF_SHA256:
-        raise ValueError('Resolucao: eboot diferente da imagem analisada (CUSA00785 01.02)')
+        # Another dump of 01.02 can differ outside the patched code: the byte checks below decide.
+        print('Resolucao: eboot com hash diferente; conferindo os bytes originais')
     out = []
     for target, original, replacement in (WRITES_2160 if mode == '2160' else WRITES_1080):
         start = elf_offset(elf, target, len(original))

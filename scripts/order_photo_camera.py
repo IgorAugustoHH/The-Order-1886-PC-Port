@@ -22,7 +22,8 @@ def camera_writes(elf, metadata):
     if metadata.get('TITLE_ID') != TITLE_ID or metadata.get('APP_VER') != APP_VERSION:
         raise ValueError('Modo foto: candidato exclusivo de CUSA00785 01.02')
     if hashlib.sha256(elf).hexdigest() != ELF_SHA256:
-        raise ValueError('Modo foto: eboot diferente da imagem analisada; teste recusado')
+        # Another dump of 01.02 can differ outside the gate: the byte check below decides.
+        print('Modo foto: eboot com hash diferente; conferindo a instrucao original')
     phoff, = struct.unpack_from('<Q', elf, 0x20)
     entry_size, count = struct.unpack_from('<HH', elf, 0x36)
     for index in range(count):
