@@ -7,8 +7,8 @@ O jogo roda direto no processador do PC, sem emulação de CPU. Só o que muda e
 as funções do sistema da Sony e a GPU, cujos comandos e shaders viram Vulkan. Sem janela de emulador,
 sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR.
 
-**Versão atual: [v0.1.2](https://github.com/IgorAugustoHH/The-Order-1886-Nativo-PC/releases/tag/v0.1.2) (pré-lançamento)** ·
-**[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-Nativo-PC/releases/latest)**
+**Versão atual: [v0.1.2](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/tag/v0.1.2) (pré-lançamento)** ·
+**[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)**
 
 ![Londres vista do telhado, rodando nativo no PC](docs/screenshots/londres-telhado.jpg)
 
@@ -52,7 +52,7 @@ sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR
 - **Arquivo de paginação do Windows num SSD/NVMe.** Num HD mecânico o jogo engasga quando a RAM aperta.
 
 ## Como jogar
-1. Baixe `TOport-Windows.zip` em **[Releases](https://github.com/IgorAugustoHH/The-Order-1886-Nativo-PC/releases/latest)**.
+1. Baixe `TOport-Windows.zip` em **[Releases](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)**.
 2. Extraia em qualquer pasta (de preferência num SSD).
 3. Abra **`TOport.exe`**.
 4. Em **Jogo e idioma**, escolha a pasta do seu dump **01.02** (a que tem `eboot.bin`). O launcher
@@ -71,7 +71,7 @@ da segunda em diante tudo fica mais suave.
 Todos os capítulos estão sendo testados agora; cada versão nova traz mais correções.
 
 ## Problemas e feedback
-Abra uma [issue](https://github.com/IgorAugustoHH/The-Order-1886-Nativo-PC/issues) com:
+Abra uma [issue](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/issues) com:
 - o arquivo **`last_run.log`** da pasta do TOport;
 - sua placa de vídeo, driver e quanto de RAM você tem;
 - onde aconteceu (capítulo e cena) e, se der, um print.

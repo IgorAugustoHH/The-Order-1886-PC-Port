@@ -37,8 +37,8 @@ TITLE_ID = 'CUSA00785'
 GAME_VERSION = '01.02'
 VERSION = '0.1.2'
 # Releases (pre-releases included): the launcher offers a newer one on its sidebar.
-RELEASES_API = 'https://api.github.com/repos/IgorAugustoHH/The-Order-1886-Nativo-PC/releases?per_page=5'
-RELEASES_PAGE = 'https://github.com/IgorAugustoHH/The-Order-1886-Nativo-PC/releases'
+RELEASES_API = 'https://api.github.com/repos/IgorAugustoHH/The-Order-1886-PC-Port/releases?per_page=5'
+RELEASES_PAGE = 'https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases'
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 

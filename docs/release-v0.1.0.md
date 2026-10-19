@@ -5,7 +5,7 @@ construído sobre o [BBPort](https://github.com/Supermedo/bloodborne_pc) e o nú
 [shadPS4](https://github.com/shadps4-emu/shadPS4). O código do jogo roda direto no processador;
 só as funções do sistema e a GPU são traduzidas.
 
-![Londres vista do telhado](https://raw.githubusercontent.com/IgorAugustoHH/The-Order-1886-Nativo-PC/main/docs/screenshots/londres-telhado.jpg)
+![Londres vista do telhado](https://raw.githubusercontent.com/IgorAugustoHH/The-Order-1886-PC-Port/main/docs/screenshots/londres-telhado.jpg)
 
 ## Destaques
 - **Modo Original do PS4:** a câmera cinematográfica 2.40:1 com as faixas pretas nativas, como no
@@ -40,4 +40,4 @@ marcas dos seus donos. **Nenhum arquivo do jogo é distribuído**: é preciso o 
 cópia que você possui legalmente. Fornecido "como está", sem garantias. Licença GPL-2.0-or-later;
 DLSS sob a licença da NVIDIA incluída no pacote.
 
-Agradecimentos completos no [README](https://github.com/IgorAugustoHH/The-Order-1886-Nativo-PC#agradecimentos).
+Agradecimentos completos no [README](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port#agradecimentos).
