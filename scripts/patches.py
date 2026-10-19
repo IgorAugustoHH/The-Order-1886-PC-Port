@@ -305,6 +305,9 @@ def main():
         from order_resolution import resolution_writes as order_resolution_writes
         camera_writes+=order_resolution_writes((a.out/'eboot.elf').read_bytes(),
                                                os.environ['BB_ORDER_RESOLUTION'])
+    if version=='01.02' and os.environ.get('BB_ORDER_FPS','30')!='30':
+        from order_fps import fps_writes as order_fps_writes
+        camera_writes+=order_fps_writes((a.out/'eboot.elf').read_bytes(),os.environ['BB_ORDER_FPS'])
     if os.environ.get('BB_ORDER_DISABLE_DOF') == '1':
         raise ValueError('Teste global DoF The Order retirado a pedido de Igor; nao aplicar')
     if version and version!=a.app_version and not os.environ.get('BB_FORCE_PATCHES'):

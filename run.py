@@ -110,6 +110,7 @@ photo_camera=1
 fast_loading=1
 preload_shaders=1
 fps_limit=60
+order_fps=30
 '''
 
 
@@ -161,6 +162,9 @@ def toport_environment(env, config):
         env.setdefault('BB_COMPUTE_PIPE_PARTS', 'ade')
         env.setdefault('BB_COMMAND_PIPE', '1')
     env.setdefault('BB_FPS_LIMIT', setting('fps_limit', '60'))
+    # The game's own frame rate (scripts/order_fps.py): 60 is illusion0001's unlock, which
+    # softlocks QTEs in chapters 6 and 9. fps_limit only caps what the game produces.
+    env.setdefault('BB_ORDER_FPS', setting('order_fps', '30'))
     # Pipelines of the last two sessions built before the game starts (fewer first-use stalls).
     env.setdefault('BB_PRELOAD_PIPELINES', setting('preload_shaders', '1'))
     env['BB_TOPORT_KEYS'] = ','.join(sorted(set(env) - before))

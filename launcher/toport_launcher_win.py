@@ -136,6 +136,9 @@ def RESOLUTIONS():
 
 UI_LANGUAGES = [('pt', 'Português'), ('en', 'English')]
 FPS_LIMITS = [('30', '30 FPS'), ('60', '60 FPS'), ('90', '90 FPS'), ('120', '120 FPS')]
+def GAME_FPS():
+    return [('30', T('30 FPS (original)', '30 FPS (original)')),
+            ('60', T('60 FPS (experimental)', '60 FPS (experimental)'))]
 # PS4 system language codes (gpu/shim/bbport_settings.h GameLanguages).
 LANGUAGES = [('17', 'Português (Brasil)'), ('7', 'Português (Portugal)'), ('1', 'English (US)'),
              ('18', 'English (UK)'), ('3', 'Español (España)'), ('20', 'Español (Latinoamérica)'),
@@ -149,7 +152,7 @@ def DISPLAY_MODES():
             ('2', T('Tela cheia exclusiva', 'Exclusive full screen')), ('0', T('Janela', 'Window'))]
 INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'fps_limit': '60',
                 'game_language': '17', 'photo_camera': '1', 'fast_loading': '1', 'show_fps': '1',
-                'preload_shaders': '1'}
+                'preload_shaders': '1', 'order_fps': '30'}
 INI_FLAGS = ('photo_camera', 'fast_loading', 'show_fps', 'preload_shaders')
 APP_DEFAULTS = {'game_dir': str(PORT_DIR.parent / TITLE_ID), 'display': '1',
                 'close_on_play': False, 'ui_language': UI_LANG}
@@ -662,6 +665,11 @@ class Launcher:
                    'Borderless is recommended. Exclusive changes the monitor mode.'))
         self.check(f, 'show_fps', 'ini', T('Mostrar FPS no canto', 'Show FPS in the corner'))
         self.section(f, T('Desempenho', 'Performance'))
+        self.row(f, T('Taxa de quadros do jogo', 'Game frame rate'), self.choice(f, 'order_fps', 'ini', GAME_FPS()),
+                 T('O jogo foi feito para 30 FPS. 60 FPS usa o patch do illusion0001; os QTEs dos '
+                   'capítulos 6 e 9 travam com ele: volte a 30 para passar por eles.',
+                   "The game was made for 30 FPS. 60 FPS uses illusion0001's patch; QTEs in chapters "
+                   '6 and 9 softlock with it: switch back to 30 to get past them.'))
         self.row(f, T('Limite de quadros', 'Frame limit'), self.choice(f, 'fps_limit', 'ini', FPS_LIMITS),
                  T('F9 alterna 30/60/90/120 durante o jogo. Algumas cutscenes foram feitas para 30 FPS.',
                    'F9 cycles 30/60/90/120 in game. Some cutscenes were made for 30 FPS.'))

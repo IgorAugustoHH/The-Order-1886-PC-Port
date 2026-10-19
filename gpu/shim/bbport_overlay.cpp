@@ -230,6 +230,12 @@ void Menu() {
     Hint(L("Original: como no PS4, cena em 2.40:1 com faixas pretas, e a iluminação correta. As opções 16:9 usam os patches do illusion0001 que vieram no executável do dump; o autor avisa que 1080p em 16:9 tem problemas visuais. Reinicie para aplicar.", "Original: as on PS4, a 2.40:1 scene with black bars and correct lighting. The 16:9 options use illusion0001's patches found in the dump's executable; their author warns that 16:9 at 1080p has visual issues. Restart to apply."));
 
     ImGui::SeparatorText(L("Desempenho", "Performance"));
+    static const unsigned game_fps_values[] = {30, 60};
+    const char* const game_fps_names[] = {L("30 FPS (original)", "30 FPS (original)"),
+                                          L("60 FPS (experimental)", "60 FPS (experimental)")};
+    OrderCombo("gamefps", L("Taxa de quadros do jogo", "Game frame rate"), s.order_fps, game_fps_values,
+               game_fps_names);
+    Hint(L("O jogo foi feito para 30 FPS. 60 FPS usa o patch do illusion0001; os QTEs dos capítulos 6 e 9 travam com ele: volte a 30 para passar por eles. Reinicie para aplicar.", "The game was made for 30 FPS. 60 FPS uses illusion0001's patch; QTEs in chapters 6 and 9 softlock with it: switch back to 30 to get past them. Restart to apply."));
     static const unsigned fps_values[] = {30, 60, 90, 120};
     static const char* const fps_names[] = {"30 FPS", "60 FPS", "90 FPS", "120 FPS"};
     OrderCombo("fps", L("Limite de quadros (F9)", "Frame limit (F9)"), s.fps_limit, fps_values, fps_names);
