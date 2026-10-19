@@ -222,8 +222,8 @@ private:
     AmdGpu::Liverpool* liverpool;
     DescriptorHeap desc_heap;
     vk::UniquePipelineCache pipeline_cache;
-    /// bbport: saves the driver's pipeline cache to disk now and then (declared after it, so it
-    /// stops first).
+    /// bbport: saves the recent pipelines list and, with BB_DRIVER_PIPELINE_CACHE=1, the driver's
+    /// pipeline cache to disk now and then (declared after it, so it stops first).
     std::jthread driver_cache_saver;
     vk::UniquePipelineLayout pipeline_layout;
     Shader::Profile profile{};

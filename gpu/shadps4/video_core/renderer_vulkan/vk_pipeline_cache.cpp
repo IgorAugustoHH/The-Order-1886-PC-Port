@@ -435,12 +435,14 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     startup_mark("WarmUp end");
     StartAsyncCompilers();
     startup_mark("async compiler start end");
-    if (!persist) {
-        return;
+    if (persist) {
+        std::printf("Driver pipeline cache: loaded %.1f MiB from %s\n",
+                    double(initial.size()) / (1024.0 * 1024.0), cache_path.string().c_str());
     }
-    std::printf("Driver pipeline cache: loaded %.1f MiB from %s\n",
-                double(initial.size()) / (1024.0 * 1024.0), cache_path.string().c_str());
-    driver_cache_saver = std::jthread([this, cache_path](std::stop_token stop) {
+    // The recent pipelines list (preload_shaders) is saved here too, so the thread runs without
+    // the driver cache: with BB_DRIVER_PIPELINE_CACHE=0 (the default) the list was never written
+    // and every session started with "no recent sessions yet".
+    driver_cache_saver = std::jthread([this, cache_path, persist](std::stop_token stop) {
         // bbport (Claude, 13/10): getPipelineCacheData copies the whole driver cache (~650 MiB)
         // into RAM before writing it; every 30 s that spike pushed runs 95-97/108 under the
         // 700 MiB RAM guard. Ask the size first and only copy when free RAM covers it plus a
@@ -490,11 +492,11 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
             }
             SaveRecentPipelines();
             const u64 compiles = g_bb_compiles_total.load();
-            if (compiles != saved_compiles && save(false)) {
+            if (persist && compiles != saved_compiles && save(false)) {
                 saved_compiles = compiles;
             }
         }
-        if (g_bb_compiles_total.load() != saved_compiles) {
+        if (persist && g_bb_compiles_total.load() != saved_compiles) {
             save(true);
         }
         SaveRecentPipelines();
