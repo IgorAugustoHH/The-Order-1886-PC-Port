@@ -25,6 +25,7 @@
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
+#include "video_core/renderer_vulkan/vk_order_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -206,6 +207,27 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
                               .optimalTilingFeatures;
     depth_blit = (features & vk::FormatFeatureFlagBits::eBlitSrc) &&
                  (features & vk::FormatFeatureFlagBits::eBlitDst);
+    // TOport (The Order): BB_ORDER_OUTPUT turns this upscaler on for the finished frame,
+    // BB_ORDER_UPSCALER picks the provider (dlss, fsr3, fsr4, fsr411; off: linear scaling).
+    if (SceneResolution::OrderUpscaling()) {
+        order_mode = true;
+        enabled = true;
+        target_width = SceneResolution::OrderOutput().width;
+        target_height = SceneResolution::OrderOutput().height;
+        const char* name = std::getenv("BB_ORDER_UPSCALER");
+        const std::string provider = name ? name : "dlss";
+        auto& upscaler = BbSettings::Get().upscaler;
+        upscaler = provider == "fsr3"     ? BbSettings::UpscalerFsr3
+                   : provider == "fsr4"   ? BbSettings::UpscalerFsr4
+                   : provider == "fsr411" ? BbSettings::UpscalerFsr411
+                   : provider == "off"    ? BbSettings::UpscalerOff
+                                          : BbSettings::UpscalerDlss;
+        if (upscaler == BbSettings::UpscalerDlss && !BbSettings::Get().dlss_supported) {
+            upscaler = BbSettings::UpscalerFsr3;
+        }
+        std::printf("Order output: %ux%u display, %s on the finished frame\n", target_width,
+                    target_height, BbSettings::UpscalerName(upscaler));
+    }
     if (enabled && !instance.IsStorageImageWriteWithoutFormatEnabled()) {
         std::printf("Upscaler: shaderStorageImageWriteWithoutFormat unsupported, FSR 3 off\n");
         enabled = false;
@@ -258,14 +280,38 @@ float Halton(u32 index, u32 base) {
 } // namespace
 
 bool TemporalUpscaler::ReducedScene(const VideoCore::Image& color) const {
-    return !scaled_session && scene_targets.Reduced() && scene_targets.EligibleScene(color);
+    return !order_mode && !scaled_session && scene_targets.Reduced() && scene_targets.EligibleScene(color);
 }
 
 bool TemporalUpscaler::RasterScaling() const {
-    return !scaled_session && scene_targets.Reduced() && !done_this_frame;
+    return !order_mode && !scaled_session && scene_targets.Reduced() && !done_this_frame;
 }
 
 bool TemporalUpscaler::OnFrameStart() {
+    if (order_mode) {
+        // A frame without UI draws: its finished image is upscaled before its display pass.
+        if (!ui_phase && ldr_target) {
+            OrderUpscale(ldr_target, {});
+        }
+        const int upscaler = BbSettings::Get().upscaler.load();
+        if (applied_upscaler != upscaler) {
+            scheduler.Finish();
+            fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
+            fsr4_failed = false;
+            failed = false;
+            reset = true;
+            applied_upscaler = upscaler;
+        }
+        if (!dispatched_last_frame) reset = true;
+        dispatched_last_frame = false;
+        display_redirect = ui_phase;
+        ui_phase = false;
+        ui_read_barrier = false;
+        done_this_frame = false;
+        ldr_target = {};
+        jitter = {};
+        return false;
+    }
     auto& status = BbSettings::Get();
     if (dispatched_last_frame) status.temporal_status = "Reconstrução gravada no quadro anterior";
     else if (!Active()) status.temporal_status = "Reconstrução temporal desativada";
@@ -1298,7 +1344,7 @@ std::array<u32, 2> TemporalUpscaler::SceneSize(u32 w, u32 h) const {
 }
 
 float TemporalUpscaler::SceneMipBias() const {
-    if (!Active() || BbSettings::Get().upscaler == BbSettings::UpscalerTaa) return 0.0f;
+    if (order_mode || !Active() || BbSettings::Get().upscaler == BbSettings::UpscalerTaa) return 0.0f;
     const float render = float(BbSettings::Get().active_render_width.load());
     const float output = float(Scaled() ? target_width : 1920u);
     return render > 0.0f && render < output ? std::log2(render / output) : 0.0f;
@@ -1309,6 +1355,18 @@ bool TemporalUpscaler::Scaled() const {
 }
 
 void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
+    if (order_mode) {
+        // The Order: the last scene-size A2B10G10R10 target before the UI is the finished
+        // frame (pass #107 in docs/order_mapa_upscaling.md).
+        const auto& image = texture_cache.GetImage(color);
+        const auto game = SceneResolution::GameSize();
+        if (!ui_phase && image.info.pixel_format == vk::Format::eA2B10G10R10UnormPack32 &&
+            image.info.num_samples == 1 && image.info.size.width == game.width &&
+            image.info.size.height == game.height) {
+            ldr_target = color;
+        }
+        return;
+    }
     if (ui_phase || !camera_motion.Depth()) {
         return;
     }
@@ -1323,6 +1381,25 @@ void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
 
 void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
                               VideoCore::ImageId depth, bool native_viewport) {
+    if (order_mode) {
+        if (!color) {
+            return;
+        }
+        if (ui_phase) {
+            // The UI's own depth (cleared by its first pass) once a draw uses it.
+            if (color == ui_color && depth && depth != ui_depth) {
+                EnsureUiResources(ui_width, ui_height, ui_format,
+                                  texture_cache.GetImage(depth).info.pixel_format);
+                PrepareUiDepth(depth);
+                ui_depth = depth;
+            }
+            return;
+        }
+        if (vs_hash == OrderUiVs && color == ldr_target) {
+            OrderUpscale(color, depth);
+        }
+        return;
+    }
     if (!Scaled() && vs_hash == ui_trigger_vs) done_this_frame = true;
     if (!Scaled() || !color) {
         return;
@@ -1485,7 +1562,9 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
     const auto& color = texture_cache.GetImage(color_id);
     const auto depth_format = depth_id ? texture_cache.GetImage(depth_id).info.pixel_format
                                       : vk::Format::eD32SfloatS8Uint;
-    EnsureUiResources(target_width, target_height, color.info.pixel_format, depth_format);
+    const auto ui_size = order_mode ? OrderOutSize(color.info.size.width, color.info.size.height)
+                                    : std::array<u32, 2>{target_width, target_height};
+    EnsureUiResources(ui_size[0], ui_size[1], color.info.pixel_format, depth_format);
     PrepareUiDepth(depth_id);
     // Copy only the background already drawn. The subsequent menu/HUD/text draws execute
     // directly at output resolution, including frames with no scene or camera at all.
@@ -1788,6 +1867,309 @@ void TemporalUpscaler::RunScaled() {
     }
 }
 
+void TemporalUpscaler::EnsureOrderFrame(u32 w, u32 h) {
+    if (order_frame && order_frame_width == w && order_frame_height == h) {
+        return;
+    }
+    scheduler.Finish();
+    const auto device = instance.GetDevice();
+    order_frame_view.reset();
+    order_frame = VideoCore::UniqueImage(device, instance.GetAllocator());
+    order_frame.Create(vk::ImageCreateInfo{
+        .flags = vk::ImageCreateFlagBits::eMutableFormat | vk::ImageCreateFlagBits::eExtendedUsage,
+        .imageType = vk::ImageType::e2D,
+        .format = vk::Format::eB8G8R8A8Srgb,
+        .extent = {w, h, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = vk::SampleCountFlagBits::e1,
+        .tiling = vk::ImageTiling::eOptimal,
+        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
+                 vk::ImageUsageFlagBits::eTransferSrc,
+        .initialLayout = vk::ImageLayout::eUndefined,
+    });
+    order_frame_view = Check(device.createImageViewUnique({
+        .image = vk::Image(order_frame),
+        .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eB8G8R8A8Srgb,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    }));
+    order_frame_width = w;
+    order_frame_height = h;
+}
+
+void TemporalUpscaler::OrderUpscale(VideoCore::ImageId color_id, VideoCore::ImageId depth_id) {
+    auto& color = texture_cache.GetImage(color_id);
+    const u32 w = color.info.size.width, h = color.info.size.height;
+    const auto [ow, oh] = OrderOutSize(w, h);
+    // The game's frame target is A2B10G10R10, but its display pass reads those bits as sRGB
+    // with red and blue swapped (B8G8R8A8 sRGB): the port's copy and its UI image use that
+    // format, so the upscaler reads real colors and the display composition converts them.
+    const auto depth_format = depth_id ? texture_cache.GetImage(depth_id).info.pixel_format
+                              : ui_depth_format != vk::Format::eUndefined ? ui_depth_format
+                                                                           : vk::Format::eD32SfloatS8Uint;
+    EnsureUiResources(ow, oh, vk::Format::eB8G8R8A8Srgb, depth_format);
+    PrepareUiDepth(depth_id);
+    EnsureOrderFrame(w, h);
+    runtime.Transit(&color, vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+    runtime.FlushBarriers();
+    scheduler.EndRendering();
+    {
+        const auto cmdbuf = scheduler.CommandBuffer();
+        const vk::ImageMemoryBarrier2 to_dst{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eNone,
+            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eTransferDstOptimal,
+            .image = vk::Image(order_frame),
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_dst});
+        const vk::ImageCopy copy{
+            .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .extent = {w, h, 1},
+        };
+        cmdbuf.copyImage(color.GetImage(), vk::ImageLayout::eTransferSrcOptimal,
+                         vk::Image(order_frame), vk::ImageLayout::eTransferDstOptimal, copy);
+        const vk::ImageMemoryBarrier2 to_read{
+            .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eTransferRead,
+            .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = vk::Image(order_frame),
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_read});
+    }
+    const bool temporal = RunOrder(w, h, ow, oh);
+    if (!temporal) {
+        // Menus, loading screens or no provider: a linear scale of the frame.
+        const auto cmdbuf = scheduler.CommandBuffer();
+        const vk::ImageMemoryBarrier2 to_dst{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eNone,
+            .dstStageMask = vk::PipelineStageFlagBits2::eBlit,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = vk::Image(ui_image),
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_dst});
+        const vk::ImageBlit region{
+            .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .srcOffsets = std::array{vk::Offset3D{0, 0, 0}, vk::Offset3D{s32(w), s32(h), 1}},
+            .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .dstOffsets = std::array{vk::Offset3D{0, 0, 0}, vk::Offset3D{s32(ow), s32(oh), 1}},
+        };
+        cmdbuf.blitImage(vk::Image(order_frame), vk::ImageLayout::eGeneral, vk::Image(ui_image),
+                         vk::ImageLayout::eGeneral, region, vk::Filter::eLinear);
+        const vk::ImageMemoryBarrier2 to_ui{
+            .srcStageMask = vk::PipelineStageFlagBits2::eBlit,
+            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentRead |
+                             vk::AccessFlagBits2::eColorAttachmentWrite,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = vk::Image(ui_image),
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_ui});
+        reset = true;
+    }
+    done_this_frame = ui_phase = true;
+    ui_color = color_id;
+    ui_depth = depth_id;
+    if (++order_frames == 1 || (temporal && !order_logged_temporal)) {
+        order_logged_temporal |= temporal;
+        std::printf("Order output: frame %ux%u -> %ux%u (%s)\n", w, h, ow, oh,
+                    temporal ? BbSettings::UpscalerName(BbSettings::Get().upscaler) : "linear");
+    }
+}
+
+bool TemporalUpscaler::RunOrder(u32 w, u32 h, u32 ow, u32 oh) {
+    // The motion and depth of this frame's resolve (none on menus and loading screens).
+    if (!Active() || failed || !order_source || order_source->PrepFrames() == order_prep_seen) {
+        return false;
+    }
+    order_prep_seen = order_source->PrepFrames();
+    const auto motion = order_source->Motion();
+    const auto scene_depth = order_source->Depth();
+    if (motion.width != w || motion.height != h) {
+        return false;
+    }
+    if (!EnsureResources(w, h, ow, oh, false)) {
+        failed = true;
+        return false;
+    }
+    const vk::Image color_image = vk::Image(order_frame);
+    const vk::ImageView color_view = *order_frame_view;
+    const auto color_format = vk::Format::eB8G8R8A8Srgb;
+    scheduler.EndRendering();
+    const auto cmdbuf = scheduler.CommandBuffer();
+    const auto all = vk::PipelineStageFlagBits2::eAllCommands;
+    const auto rw = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite;
+    const auto barrier = [&](vk::Image image, vk::ImageLayout old_layout,
+                             vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access,
+                             vk::ImageLayout new_layout, vk::PipelineStageFlags2 dst_stage,
+                             vk::AccessFlags2 dst_access) {
+        const vk::ImageMemoryBarrier2 b{
+            .srcStageMask = src_stage,
+            .srcAccessMask = src_access,
+            .dstStageMask = dst_stage,
+            .dstAccessMask = dst_access,
+            .oldLayout = old_layout,
+            .newLayout = new_layout,
+            .image = image,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
+    };
+    // The prepared motion into the upscaler's own motion image (the providers read that one).
+    const vk::MemoryBarrier2 prepared{
+        .srcStageMask = all,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = all,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &prepared});
+    barrier(vk::Image(motion_image), vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
+            vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eTransfer,
+            vk::AccessFlagBits2::eTransferWrite);
+    const vk::ImageCopy copy{
+        .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .extent = {w, h, 1},
+    };
+    cmdbuf.copyImage(motion.image, vk::ImageLayout::eGeneral, vk::Image(motion_image),
+                     vk::ImageLayout::eTransferDstOptimal, copy);
+    barrier(vk::Image(motion_image), vk::ImageLayout::eTransferDstOptimal,
+            vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+            vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
+    barrier(vk::Image(output_image), vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
+            vk::ImageLayout::eGeneral, all, rw);
+    // The previous frame's display pass read the UI image: all commands before.
+    barrier(vk::Image(ui_image), vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
+            vk::ImageLayout::eGeneral, all, rw);
+
+    const auto now = std::chrono::steady_clock::now();
+    float frame_ms = std::chrono::duration<float, std::milli>(now - last_frame).count();
+    if (frame_ms <= 0.0f || frame_ms > 200.0f) {
+        frame_ms = 16.6f;
+        reset = true;
+    }
+    last_frame = now;
+
+    bool ok = false;
+    if (UseDlss()) {
+        ok = RecordDlss(cmdbuf,
+                        {color_image, color_view, color_format, vk::ImageAspectFlagBits::eColor,
+                         w, h},
+                        scene_depth, w, h, ow, oh, frame_ms, false);
+    } else if (UseFsr4()) {
+        ok = RecordFsr4(cmdbuf, {color_image, color_view, w, h},
+                        {scene_depth.image, scene_depth.view, w, h}, w, h, ow, oh, frame_ms);
+    } else if (context) {
+        const auto& settings = BbSettings::Get();
+        FfxVkPortableUpscaleDispatchInfo info{};
+        info.structSize = sizeof(info);
+        info.commandBuffer = cmdbuf;
+        info.color = Describe(color_image, color_format, w, h, vk::ImageUsageFlagBits::eSampled,
+                              vk::ImageAspectFlagBits::eColor,
+                              FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
+        info.depth = Describe(scene_depth.image, vk::Format::eR32Sfloat, w, h,
+                              vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+                              vk::ImageAspectFlagBits::eColor,
+                              FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
+        info.motionVectors = Describe(vk::Image(motion_image), vk::Format::eR16G16Sfloat, w, h,
+                                      vk::ImageUsageFlagBits::eStorage |
+                                          vk::ImageUsageFlagBits::eSampled,
+                                      vk::ImageAspectFlagBits::eColor,
+                                      FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
+        info.output = Describe(vk::Image(output_image), vk::Format::eR16G16B16A16Sfloat, ow, oh,
+                               vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                                   vk::ImageUsageFlagBits::eTransferSrc,
+                               vk::ImageAspectFlagBits::eColor,
+                               FFX_VK_PORTABLE_RESOURCE_STATE_UNORDERED_ACCESS);
+        info.exposure.structSize = sizeof(info.exposure);
+        info.reactiveMask.structSize = sizeof(info.reactiveMask);
+        info.transparencyAndCompositionMask.structSize =
+            sizeof(info.transparencyAndCompositionMask);
+        info.jitterOffset = {jitter[0], jitter[1]};
+        info.motionVectorScale = {1.0f, 1.0f};
+        info.renderSize = {w, h};
+        info.outputSize = {ow, oh};
+        info.frameTimeMilliseconds = frame_ms;
+        info.preExposure = 1.0f;
+        info.cameraNear = 0.1f;
+        info.cameraFar = 3000.0f;
+        info.cameraVerticalFovRadians = 0.7f;
+        info.viewSpaceToMeters = 1.0f;
+        info.sharpness = std::min(settings.sharpness.load(), 1.0f);
+        info.enableSharpening = settings.sharpen ? VK_TRUE : VK_FALSE;
+        info.reset = reset ? VK_TRUE : VK_FALSE;
+        info.frameId = frame_id++;
+        FfxVkPortableUpscaleCreateInfo create_info{};
+        create_info.structSize = sizeof(create_info);
+        create_info.maxRenderSize = {w, h};
+        create_info.maxOutputSize = {ow, oh};
+        if (const u64 issues = ffxVkPortableValidateUpscaleDispatchInfo(&create_info, &info)) {
+            PrintIssues("Order dispatch", issues);
+            failed = true;
+        } else if (ffxVkPortableUpscaleContextRecordDispatch(context, &info) !=
+                   FFX_VK_PORTABLE_OK) {
+            std::printf("Upscaler: FSR 3 Order dispatch failed\n");
+            failed = true;
+        } else {
+            ok = true;
+        }
+    }
+    if (ok) {
+        ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh);
+        barrier(vk::Image(output_image), vk::ImageLayout::eGeneral, all, rw,
+                vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eBlit,
+                vk::AccessFlagBits2::eTransferRead);
+        barrier(vk::Image(ui_image), vk::ImageLayout::eGeneral, all, rw,
+                vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eBlit,
+                vk::AccessFlagBits2::eTransferWrite);
+        const vk::ImageBlit region{
+            .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .srcOffsets = std::array{vk::Offset3D{0, 0, 0}, vk::Offset3D{s32(ow), s32(oh), 1}},
+            .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .dstOffsets = std::array{vk::Offset3D{0, 0, 0}, vk::Offset3D{s32(ow), s32(oh), 1}},
+        };
+        cmdbuf.blitImage(vk::Image(output_image), vk::ImageLayout::eGeneral, vk::Image(ui_image),
+                         vk::ImageLayout::eGeneral, region, vk::Filter::eNearest);
+    }
+    barrier(vk::Image(ui_image), vk::ImageLayout::eGeneral,
+            ok ? vk::PipelineStageFlagBits2::eBlit : all,
+            ok ? vk::AccessFlagBits2::eTransferWrite : rw, vk::ImageLayout::eGeneral,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite);
+    if (!ok) {
+        reset = true;
+        return false;
+    }
+    if (const int dump = DumpFrame(); dump >= 0) {
+        DumpImages(instance, scheduler, cmdbuf, dump,
+                   {{color_image, w, h, 4, "order_input", "rgba"},
+                    {vk::Image(motion_image), w, h, 4, "order_motion", "rg16f"},
+                    {scene_depth.image, w, h, 4, "order_depth", "r32f"},
+                    {vk::Image(output_image), ow, oh, 8, "order_output", "rgba16f"}});
+    }
+    reset = false;
+    dispatched_last_frame = true;
+    ++BbSettings::Get().temporal_recorded;
+    return true;
+}
+
 vk::ImageView TemporalUpscaler::Mirror(vk::Image image, std::vector<MirrorView>& views,
                                        vk::Format format, vk::ComponentMapping mapping) {
     for (const auto& entry : views) {
@@ -1814,8 +2196,9 @@ vk::ImageView TemporalUpscaler::Mirror(vk::Image image, std::vector<MirrorView>&
 bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
                                      const VideoCore::ImageViewInfo& view_info, Target& target) {
     if (ui_phase && color == ui_color) {
+        // The Order's UI coordinates are the guest target's (1920x800): no native-UI rule.
         target = {Mirror(vk::Image(ui_image), ui_views, view_info.format, {}),
-                  vk::ImageLayout::eGeneral, ui_width, ui_height, true};
+                  vk::ImageLayout::eGeneral, ui_width, ui_height, !order_mode};
         return true;
     }
     const auto& image = texture_cache.GetImage(color);
@@ -1830,32 +2213,120 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         display.valid = false; // not upscaled: the presenter shows the guest buffer
         return false;
     }
+    // The Order: the display buffer (1920x1080, the 1920x800 frame between bars) is scaled
+    // like the frame; Bloodborne's frame is the whole display buffer.
+    const auto display_size = order_mode
+                                  ? OrderOutSize(image.info.size.width, image.info.size.height)
+                                  : std::array<u32, 2>{ui_width, ui_height};
     if (!display.image || display.format != image.info.pixel_format ||
-        display.width != ui_width || display.height != ui_height) {
+        display.width != display_size[0] || display.height != display_size[1]) {
         const auto device = instance.GetDevice();
         scheduler.Finish();
         display.views.clear();
-        std::printf("Display: host buffer %ux%u (live)\n", ui_width, ui_height);
+        std::printf("Display: host buffer %ux%u (live)\n", display_size[0], display_size[1]);
         display.format = image.info.pixel_format;
-        display.width = ui_width;
-        display.height = ui_height;
+        display.width = display_size[0];
+        display.height = display_size[1];
         display.image = VideoCore::UniqueImage(device, instance.GetAllocator());
         display.image.Create(vk::ImageCreateInfo{
             .flags = vk::ImageCreateFlagBits::eMutableFormat,
             .imageType = vk::ImageType::e2D,
             .format = display.format,
-            .extent = {ui_width, ui_height, 1},
+            .extent = {display_size[0], display_size[1], 1},
             .mipLevels = 1,
             .arrayLayers = 1,
             .samples = vk::SampleCountFlagBits::e1,
             .tiling = vk::ImageTiling::eOptimal,
             .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
-                     vk::ImageUsageFlagBits::eTransferSrc,
+                     vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
             .initialLayout = vk::ImageLayout::eUndefined,
         });
         display.views.clear();
     }
     scheduler.EndRendering();
+    if (order_mode) {
+        // The Order's display pass reads the frame by pixel position (texel fetches): a
+        // larger frame cannot go through it. The port composes the output display instead:
+        // black bars and the output-size frame in the middle; the game's pass draws natively.
+        display_redirect = false;
+        const u32 dx = (display_size[0] - std::min(display_size[0], ui_width)) / 2;
+        const u32 dy = (display_size[1] - std::min(display_size[1], ui_height)) / 2;
+        const u32 cw = std::min(display_size[0], ui_width), ch = std::min(display_size[1], ui_height);
+        const vk::Image dst = vk::Image(display.image), src = vk::Image(ui_image);
+        const bool same_format = display.format == ui_format;
+        scheduler.Record([dst, src, dx, dy, cw, ch, same_format](vk::CommandBuffer cmd) {
+            const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+            const std::array before{
+                vk::ImageMemoryBarrier2{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                    .srcAccessMask = vk::AccessFlagBits2::eNone,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                    .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                    .oldLayout = vk::ImageLayout::eUndefined,
+                    .newLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .image = dst,
+                    .subresourceRange = range,
+                },
+                vk::ImageMemoryBarrier2{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput |
+                                    vk::PipelineStageFlagBits2::eTransfer,
+                    .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite |
+                                     vk::AccessFlagBits2::eTransferWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                    .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                    .oldLayout = vk::ImageLayout::eGeneral,
+                    .newLayout = vk::ImageLayout::eGeneral,
+                    .image = src,
+                    .subresourceRange = range,
+                },
+            };
+            cmd.pipelineBarrier2({.imageMemoryBarrierCount = u32(before.size()),
+                                  .pImageMemoryBarriers = before.data()});
+            cmd.clearColorImage(dst, vk::ImageLayout::eTransferDstOptimal,
+                                vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 1.0f}}, range);
+            const vk::MemoryBarrier2 cleared{
+                .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+            };
+            cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &cleared});
+            if (same_format) {
+                const vk::ImageCopy copy{
+                    .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                    .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                    .dstOffset = {s32(dx), s32(dy), 0},
+                    .extent = {cw, ch, 1},
+                };
+                cmd.copyImage(src, vk::ImageLayout::eGeneral, dst,
+                              vk::ImageLayout::eTransferDstOptimal, copy);
+            } else {
+                const vk::ImageBlit blit{
+                    .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                    .srcOffsets = std::array{vk::Offset3D{0, 0, 0},
+                                             vk::Offset3D{s32(cw), s32(ch), 1}},
+                    .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                    .dstOffsets = std::array{vk::Offset3D{s32(dx), s32(dy), 0},
+                                             vk::Offset3D{s32(dx + cw), s32(dy + ch), 1}},
+                };
+                cmd.blitImage(src, vk::ImageLayout::eGeneral, dst,
+                              vk::ImageLayout::eTransferDstOptimal, blit, vk::Filter::eNearest);
+            }
+            const vk::ImageMemoryBarrier2 after{
+                .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                .newLayout = vk::ImageLayout::eGeneral,
+                .image = dst,
+                .subresourceRange = range,
+            };
+            cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &after});
+        });
+        display.valid = true;
+        return false;
+    }
     const vk::ImageMemoryBarrier2 b{
         .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
         .srcAccessMask = vk::AccessFlagBits2::eNone,
@@ -1871,7 +2342,7 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
     });
     display.valid = true;
     target = {Mirror(vk::Image(display.image), display.views, view_info.format, {}),
-              vk::ImageLayout::eGeneral, ui_width, ui_height};
+              vk::ImageLayout::eGeneral, display_size[0], display_size[1]};
     return true;
 }
 
@@ -1886,7 +2357,7 @@ bool TemporalUpscaler::RedirectDepth(VideoCore::ImageId depth, Target& target) {
 bool TemporalUpscaler::RedirectSampled(VideoCore::ImageId image,
                                        const VideoCore::ImageViewInfo& info, vk::ImageView& view,
                                        vk::ImageLayout& layout) {
-    if (!display_redirect || image != ui_color) {
+    if (order_mode || !display_redirect || image != ui_color) {
         return false;
     }
     if (!ui_read_barrier) {

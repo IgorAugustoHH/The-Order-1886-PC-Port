@@ -59,12 +59,17 @@ OrderDlss::OrderDlss(const Instance& instance_, Scheduler& scheduler_,
                      SceneTargets& scene_targets_)
     : instance{instance_}, scheduler{scheduler_}, texture_cache{texture_cache_},
       runtime{runtime_}, scene_targets{scene_targets_} {
-    enabled = EnvOn("BB_ORDER_DLSS");
+    // TOport: with BB_ORDER_OUTPUT the finished frame is upscaled (TemporalUpscaler): the
+    // resolve only prepares its motion and depth and resolves the MSAA scene without the
+    // game's TAA, the temporal work moving to the output upscaler.
+    prep_only = SceneResolution::OrderUpscaling();
+    game_taa = EnvOn("BB_ORDER_OUTPUT_GAME_TAA");
+    enabled = EnvOn("BB_ORDER_DLSS") || prep_only;
     depth_invert = EnvOn("BB_ORDER_DLSS_DEPTH_INVERT");
     if (!enabled) {
         return;
     }
-    if (const int preset = ModePreset()) {
+    if (const int preset = prep_only ? 0 : ModePreset()) {
         scaled = true;
         scene_size = SceneResolution::ForPreset(preset, SceneResolution::GameSize());
         scene_targets.allow_msaa = true;
@@ -101,6 +106,12 @@ OrderDlss::OrderDlss(const Instance& instance_, Scheduler& scheduler_,
                 .layout = *pipeline_layout,
             }));
     device.destroyShaderModule(module);
+    if (prep_only) {
+        std::printf("Order output: the resolve prepares motion and depth for the output "
+                    "upscaler (%s)\n",
+                    game_taa ? "game TAA kept" : "MSAA resolve without the game's TAA");
+        return;
+    }
     std::printf("Order DLSS: on (replaces the temporal MSAA resolve; depth invert %d; scene %s)\n",
                 depth_invert ? 1 : 0,
                 scaled ? fmt::format("{}x{} -> {}x{}", scene_size.width, scene_size.height, SceneResolution::GameSize().width, SceneResolution::GameSize().height)
@@ -195,7 +206,8 @@ bool OrderDlss::Replace(std::span<const VideoCore::ImageId> images, std::span<co
     const bool was_open = scene_open;
     scene_open = false;
     Dlss* dlss = Dlss::Get();
-    if (!enabled || failed || !dlss || !dlss->Available() || flatbuf.size() < 66) {
+    if (!enabled || failed || flatbuf.size() < 66 ||
+        (!prep_only && (!dlss || !dlss->Available()))) {
         return false;
     }
     VideoCore::ImageId exposure_id{}, velocity_id{}, color_id{}, output_id{};
@@ -375,6 +387,34 @@ bool OrderDlss::Replace(std::span<const VideoCore::ImageId> images, std::span<co
                     vk::AccessFlagBits2::eShaderRead);
     }
 
+    if (prep_only) {
+        if (++prep_frames == 1) {
+            std::printf("Order output: motion and depth %ux%u (velocity scale %g)\n", w, h,
+                        velocity_scale);
+        }
+        if (game_taa) {
+            return false; // the game's resolve runs after the prepared inputs
+        }
+        // The plain MSAA resolve (the game's weighting) as the resolve's output and history.
+        own_barrier(vk::Image(color_image), vk::ImageLayout::eGeneral, all,
+                    vk::AccessFlagBits2::eShaderRead, vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+        runtime.Transit(&output, vk::ImageLayout::eTransferDstOptimal,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+        runtime.FlushBarriers();
+        const vk::ImageCopy region{
+            .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .extent = {ow, oh, 1},
+        };
+        cmdbuf.copyImage(vk::Image(color_image), vk::ImageLayout::eTransferSrcOptimal,
+                         vk::Image(output.backing->image), vk::ImageLayout::eTransferDstOptimal,
+                         region);
+        own_barrier(vk::Image(color_image), vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eNone,
+                    vk::ImageLayout::eGeneral, all, rw);
+        return true;
+    }
     const Dlss::FeatureDesc desc{w, h, ow, oh, Dlss::QualityForScale(float(ow) / float(w)), true};
     bool ok = true;
     if (!dlss->HasFeature(desc)) {

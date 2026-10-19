@@ -247,6 +247,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
                                                   *camera_motion, *scene_targets);
     order_dlss = std::make_unique<OrderDlss>(instance, scheduler, texture_cache, runtime,
                                               *scene_targets);
+    upscaler->SetOrderSource(order_dlss.get());
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
@@ -1274,6 +1275,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         static const char* scene_debug = std::getenv("BB_SCENE_DEBUG");
         scene_debug_frame = scene_debug && std::remove(scene_debug) == 0;
         scene_targets->debug = scene_debug_frame;
+    } else if (upscaler->OrderMode() && regs.color_buffers[0] &&
+               FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
+        // TOport: the display pass of The Order's upscaled output (no camera motion there).
+        upscaler->OnFrameStart();
     }
     bind_prepared = used_prepared;
     motion_draw = pipeline->GetGraphicsKey().motion_vectors;
