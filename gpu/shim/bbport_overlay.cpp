@@ -262,10 +262,10 @@ void Menu() {
         s.order_aa.store(BbSettings::OrderAaGame); // the recommended anti-aliasing above 1080p
     }
     if (s.order_output != 1080) {
+        // FSR 4 / 4.1.1 stay reachable through bbport.ini (order_upscaler) until tested.
         static const int upscaler_values[] = {BbSettings::UpscalerDlss, BbSettings::UpscalerFsr3,
-                                              BbSettings::UpscalerFsr4, BbSettings::UpscalerFsr411,
                                               BbSettings::UpscalerOff};
-        const char* const upscaler_names[] = {"NVIDIA DLSS", "AMD FSR 3.1", "AMD FSR 4", "AMD FSR 4.1.1",
+        const char* const upscaler_names[] = {"NVIDIA DLSS", "AMD FSR 3.1",
                                               L("Nenhum (ampliação simples)", "None (simple scaling)")};
         OrderCombo("upscaler", "Upscaler", s.order_upscaler, upscaler_values, upscaler_names);
         ImGui::PushID("sharpness");

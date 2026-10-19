@@ -147,8 +147,9 @@ def OUTPUTS():
 
 
 def UPSCALERS():
-    return [('dlss', 'NVIDIA DLSS'), ('fsr3', 'AMD FSR 3.1'), ('fsr4', 'AMD FSR 4'),
-            ('fsr411', 'AMD FSR 4.1.1'), ('off', T('Nenhum (ampliação simples)', 'None (simple scaling)'))]
+    # FSR 4 / 4.1.1 stay reachable through bbport.ini (order_upscaler) until tested.
+    return [('dlss', 'NVIDIA DLSS'), ('fsr3', 'AMD FSR 3.1'),
+            ('off', T('Nenhum (ampliação simples)', 'None (simple scaling)'))]
 
 
 def SHARPNESS():
@@ -736,10 +737,9 @@ class Launcher:
                    "the upscaler does the temporal work; with the original TAA the game's TAA runs first."))
         self.row(f, 'Upscaler', self.choice(f, 'order_upscaler', 'ini', UPSCALERS()),
                  T('Usado quando a resolução de saída é maior que 1080p. DLSS precisa de uma NVIDIA RTX; '
-                   'FSR 4 precisa de uma AMD RX 9000 (ou de suporte a FP8/INT8); FSR 3.1 roda em qualquer '
-                   'placa.',
-                   'Used when the output resolution is above 1080p. DLSS needs an NVIDIA RTX; FSR 4 needs '
-                   'an AMD RX 9000 (or FP8/INT8 support); FSR 3.1 runs on any GPU.'))
+                   'FSR 3.1 roda em qualquer placa.',
+                   'Used when the output resolution is above 1080p. DLSS needs an NVIDIA RTX; FSR 3.1 '
+                   'runs on any GPU.'))
         self.row(f, T('Nitidez', 'Sharpening'), self.choice(f, 'sharpness', 'ini', SHARPNESS()),
                  T('Nitidez aplicada depois do upscaler (DLSS ou FSR 3.1), quando a saída é maior que '
                    '1080p. Também há um controle deslizante no menu do jogo (Insert), que vale na hora.',
