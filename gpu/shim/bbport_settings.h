@@ -107,12 +107,14 @@ struct Values {
     std::atomic<bool> preload_shaders{true};     ///< build last sessions' pipelines at start
     std::atomic<bool> ui_english{false};         ///< menu language: ui_language=en (launcher)
     std::atomic<unsigned> fps_limit{60};         ///< 30/60/90/120; F9 cycles it, applied live
+    std::atomic<unsigned> order_fps{30};         ///< the game's own rate: 30, or 60 (unlock patch)
     int startup_order_aa = OrderAaQuality;
     int startup_order_resolution = 800;
     int startup_game_language = 17;
     bool startup_photo_camera = true;
     bool startup_fast_loading = true;
     bool startup_preload_shaders = true;
+    unsigned startup_order_fps = 30;
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

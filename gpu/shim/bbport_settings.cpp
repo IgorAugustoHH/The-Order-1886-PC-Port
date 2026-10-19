@@ -86,6 +86,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.ui_english = value == "en";
     } else if (key == "fps_limit") {
         v.fps_limit = i <= 30 ? 30u : i <= 60 ? 60u : i <= 90 ? 90u : 120u;
+    } else if (key == "order_fps") {
+        v.order_fps = i == 60 ? 60u : 30u;
     } else if (key == "output_res") {
         for (int r = 0; r < OutputCount; ++r) {
             if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
@@ -160,6 +162,7 @@ void Load() {
     v.startup_photo_camera = v.photo_camera;
     v.startup_fast_loading = v.fast_loading;
     v.startup_preload_shaders = v.preload_shaders;
+    v.startup_order_fps = v.order_fps;
 }
 
 bool OrderNeedsRestart() {
@@ -167,7 +170,7 @@ bool OrderNeedsRestart() {
     return v.order_aa != v.startup_order_aa || v.order_resolution != v.startup_order_resolution ||
            v.game_language != v.startup_game_language ||
            v.photo_camera != v.startup_photo_camera || v.fast_loading != v.startup_fast_loading ||
-           v.preload_shaders != v.startup_preload_shaders;
+           v.preload_shaders != v.startup_preload_shaders || v.order_fps != v.startup_order_fps;
 }
 
 const char* OrderAaName(int mode) {
@@ -254,13 +257,14 @@ void Save() {
     // TOport: read by run.py at start (environment for the renderer, patches and runtime).
     std::fprintf(file,
                  "order_aa=%s\norder_resolution=%s\ngame_language=%d\nphoto_camera=%d\n"
-                 "fast_loading=%d\nfps_limit=%u\npreload_shaders=%d\nui_language=%s\n",
+                 "fast_loading=%d\nfps_limit=%u\npreload_shaders=%d\nui_language=%s\norder_fps=%u\n",
                  OrderAaName(v.order_aa),
                  v.order_resolution == 800 ? "retail"
                  : v.order_resolution == 720 ? "720" : "1080",
                  v.game_language.load(),
                  int(v.photo_camera.load()), int(v.fast_loading.load()), v.fps_limit.load(),
-                 int(v.preload_shaders.load()), v.ui_english.load() ? "en" : "pt");
+                 int(v.preload_shaders.load()), v.ui_english.load() ? "en" : "pt",
+                 v.order_fps.load());
     std::fclose(file);
 }
 
