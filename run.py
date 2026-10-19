@@ -32,6 +32,20 @@ def wait_for(pid):
         kernel32.CloseHandle(handle)
 
 
+def total_ram_mib():
+    """Installed RAM in MiB, or 0 when Windows does not tell."""
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [('length', ctypes.c_ulong), ('load', ctypes.c_ulong),
+                    ('total_phys', ctypes.c_ulonglong), ('avail_phys', ctypes.c_ulonglong),
+                    ('total_page', ctypes.c_ulonglong), ('avail_page', ctypes.c_ulonglong),
+                    ('total_virtual', ctypes.c_ulonglong), ('avail_virtual', ctypes.c_ulonglong),
+                    ('avail_extended', ctypes.c_ulonglong)]
+    status = MemoryStatus(length=ctypes.sizeof(MemoryStatus))
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return 0
+    return status.total_phys >> 20
+
+
 def no_console():
     """Started without a console (the launcher): console programs must not open their own."""
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
@@ -68,6 +82,9 @@ def ini_value(path, key):
 
 # TOport (The Order: 1886): the configuration approved in testing (runs 147-161). Variables
 # already in the environment win (scripts, A/B tests).
+# Installed RAM from which the driver pipeline cache is on by default (16 GB machines report
+# a little less than 16384 MiB).
+DRIVER_CACHE_MIN_RAM_MIB = 15 * 1024
 TOPORT_DEFAULTS = {
     # Fixes from the helper's research (faces, particles, aim focus, 64-bit buffer loads).
     'BB_ADDR64_LOADS': '1', 'BB_FACE_DEPTH_FIX': '1', 'BB_FACE_SECONDARY_FIX': '1',
@@ -78,8 +95,12 @@ TOPORT_DEFAULTS = {
     'BB_DEFERRED_READBACK': '1', 'BB_READBACK_MERGE': 'fixed', 'BB_COPY_GPU_BUFFERS': '0',
     'BB_DEPTH_ALIAS_FIX': '0', 'BB_TOGGLES': '16384',
     # Shaders and pipelines: compiled in the background, cached per game in user/cache.
-    'BB_ASYNC_PIPELINES': '1', 'BB_ASYNC_SHADERS': '1', 'BB_ASYNC_COMPUTE': '0',
-    'BB_GRAPHICS_SYNC': '0', 'BB_PIPELINE_CACHE': '1', 'BB_DRIVER_PIPELINE_CACHE': '0',
+    # Compute pipelines too: built synchronously they stalled the GPU thread ~80 ms each (one
+    # shader, 0x804aeead, has 240+ permutations), 200-350 ms hitches every few seconds even
+    # with the 60 FPS median; async, the worst frame stayed at 18-32 ms.
+    'BB_ASYNC_PIPELINES': '1', 'BB_ASYNC_SHADERS': '1', 'BB_ASYNC_COMPUTE': '1',
+    # BB_DRIVER_PIPELINE_CACHE: set by RAM in toport_environment (DRIVER_CACHE_MIN_RAM_MIB).
+    'BB_GRAPHICS_SYNC': '0', 'BB_PIPELINE_CACHE': '1',
     'BB_COMPILE_THREADS': '2', 'BB_COMPILE_FAIR_QUEUE': '0', 'BB_COMPILE_AGGRESSIVE': '0',
     'BB_PRELOAD_BUDGET_MS': '0',
     # Recording and presentation.
@@ -130,6 +151,10 @@ def toport_environment(env, config):
     setting = lambda key, default: ini_value(config, key) or default
     for key, value in TOPORT_DEFAULTS.items():
         env.setdefault(key, value)
+    # The driver's pipeline cache keeps the compiled pipelines between sessions (28 MiB file,
+    # first-use builds of the next session in milliseconds), but holds a few hundred MiB of RAM
+    # and copies itself to save: on by default only where that RAM is cheap.
+    env.setdefault('BB_DRIVER_PIPELINE_CACHE', '1' if total_ram_mib() >= DRIVER_CACHE_MIN_RAM_MIB else '0')
     # Runtime optimization mask of the approved runs (16384: small read-only buffer copies
     # stay off the recording thread), read from a file the runtime watches.
     if not env.get('BB_TOGGLE_FILE'):
