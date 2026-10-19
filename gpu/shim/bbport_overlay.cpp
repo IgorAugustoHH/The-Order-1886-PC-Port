@@ -370,26 +370,24 @@ void FpsCounter() {
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                      ImGuiWindowFlags_NoFocusOnAppearing);
     const auto& s = BbSettings::Get();
+    // TOport: the upscaler runs only above 1080p (the Bloodborne field keeps a stale choice).
+    const bool upscaling = s.startup_order_output != 1080;
+    const char* const upscaler = !upscaling ? ""
+                                 : s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
+                                 : s.upscaler == BbSettings::UpscalerFsr4   ? "FSR 4"
+                                 : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
+                                 : s.upscaler == BbSettings::UpscalerTaa    ? "TAA"
+                                 : s.upscaler == BbSettings::UpscalerDlss   ? "DLSS"
+                                                                            : "";
     if (const unsigned limit = s.frame_limit.load()) {
         ImGui::Text("%.0f FPS  %.1f ms  limite %u  %s",
                     frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f, frame_ms_avg, limit,
-                    s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
-                    : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
-                    : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
-                    : s.upscaler == BbSettings::UpscalerTaa ? "TAA"
-                    : s.upscaler == BbSettings::UpscalerDlss ? "DLSS selecionado"
-                                                             : "");
+                    upscaler);
         ImGui::End();
         return;
     }
     ImGui::Text("%.0f FPS  %.1f ms  %s", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
-                frame_ms_avg,
-                s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
-                : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
-                : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
-                : s.upscaler == BbSettings::UpscalerTaa ? "TAA"
-                : s.upscaler == BbSettings::UpscalerDlss ? "DLSS"
-                                                         : "");
+                frame_ms_avg, upscaler);
     ImGui::End();
 }
 
