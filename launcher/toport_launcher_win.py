@@ -130,8 +130,8 @@ def AA_MODES():
 
 def AA_MODES_OUTPUT():
     """Anti-aliasing above 1080p: whether the game's TAA runs before the upscaler."""
-    return [('dlaa', T('Pelo upscaler (recomendado)', 'By the upscaler (recommended)')),
-            ('game', T('TAA original + upscaler', "The game's TAA + upscaler"))]
+    return [('game', T('TAA original + upscaler (recomendado)', "The game's TAA + upscaler (recommended)")),
+            ('dlaa', T('Pelo upscaler (experimental)', 'By the upscaler (experimental)'))]
 
 
 def RESOLUTIONS():
@@ -698,14 +698,15 @@ class Launcher:
                  T('Em 1080p: DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo; DLAA '
                    'mantém a cena na resolução nativa, os outros modos renderizam a cena menor e '
                    'reconstroem (mais FPS); TAA original é o anti-aliasing do PS4. Acima de 1080p: '
-                   '"Pelo upscaler" deixa o DLSS ou o FSR 3.1 fazer o anti-aliasing e a ampliação; '
-                   '"TAA original + upscaler" roda o TAA do jogo antes e o upscaler só amplia.',
+                   '"TAA original + upscaler" (recomendado) roda o TAA do jogo antes e o upscaler '
+                   'amplia; "Pelo upscaler" (experimental) deixa o DLSS ou o FSR 3.1 fazer também o '
+                   'anti-aliasing, mas partes de rostos podem sumir.',
                    "At 1080p: DLSS (NVIDIA RTX) replaces the game's own temporal resolve; DLAA keeps "
                    'the scene at native resolution, the other modes render a smaller scene and '
                    "reconstruct it (more FPS); the original TAA is the PS4's anti-aliasing. Above "
-                   '1080p: "By the upscaler" lets DLSS or FSR 3.1 do the anti-aliasing and the '
-                   "upscaling; \"The game's TAA + upscaler\" runs the game's TAA first and the "
-                   'upscaler only enlarges.'))
+                   "1080p: \"The game's TAA + upscaler\" (recommended) runs the game's TAA first "
+                   'and the upscaler enlarges; "By the upscaler" (experimental) lets DLSS or FSR 3.1 '
+                   'do the anti-aliasing too, but parts of faces may vanish.'))
         self.section(f, T('Resolução', 'Resolution'))
         self.row(f, T('Resolução do jogo', 'Game resolution'), self.choice(f, 'order_resolution', 'ini', RESOLUTIONS()),
                  T('Original: como no PS4, cena em 2.40:1 com faixas pretas e a iluminação correta '
@@ -714,6 +715,15 @@ class Launcher:
                    'Original: as on PS4, a 2.40:1 scene with black bars and correct lighting '
                    "(recommended). The 16:9 options use illusion0001's patches found in the dump's "
                    'executable; at 1080p their author warns of visual issues.'))
+        output_var = self.var('order_output', 'ini')
+        output_var.previous = output_var.get()
+
+        def output_changed(*_args):
+            # Going above 1080p picks the recommended anti-aliasing there: the game's TAA.
+            if output_var.previous == '1080' and output_var.get() != '1080':
+                self.var('order_aa', 'ini').set('game')
+            output_var.previous = output_var.get()
+        output_var.trace_add('write', output_changed)
         self.row(f, T('Resolução de saída', 'Output resolution'), self.choice(f, 'order_output', 'ini', OUTPUTS()),
                  T('Acima de 1080p, o jogo continua renderizando na própria resolução e o quadro pronto '
                    'é ampliado pelo upscaler; a interface é desenhada na resolução de saída. Com DLSS ou '

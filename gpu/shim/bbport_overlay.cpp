@@ -221,23 +221,23 @@ void Menu() {
     } else {
         // Above 1080p the choice is only whether the game's TAA runs before the upscaler; the
         // DLSS modes below DLAA mean the same as DLAA here (shown as "by the upscaler").
-        const char* const out_names[] = {L("Pelo upscaler (recomendado)", "By the upscaler (recommended)"),
-                                         L("TAA original + upscaler", "The game's TAA + upscaler")};
+        const char* const out_names[] = {L("TAA original + upscaler (recomendado)", "The game's TAA + upscaler (recommended)"),
+                                         L("Pelo upscaler (experimental)", "By the upscaler (experimental)")};
         const bool game_taa = s.order_aa == BbSettings::OrderAaGame;
         ImGui::PushID("aa_out");
-        if (ImGui::BeginCombo("Anti-aliasing", out_names[game_taa ? 1 : 0])) {
-            if (ImGui::Selectable(out_names[0], !game_taa) && game_taa) {
-                s.order_aa.store(BbSettings::OrderAaDlaa);
+        if (ImGui::BeginCombo("Anti-aliasing", out_names[game_taa ? 0 : 1])) {
+            if (ImGui::Selectable(out_names[0], game_taa) && !game_taa) {
+                s.order_aa.store(BbSettings::OrderAaGame);
                 dirty = true;
             }
-            if (ImGui::Selectable(out_names[1], game_taa) && !game_taa) {
-                s.order_aa.store(BbSettings::OrderAaGame);
+            if (ImGui::Selectable(out_names[1], !game_taa) && game_taa) {
+                s.order_aa.store(BbSettings::OrderAaDlaa);
                 dirty = true;
             }
             ImGui::EndCombo();
         }
         ImGui::PopID();
-        Hint(L("Pelo upscaler: o DLSS ou o FSR 3.1 faz o anti-aliasing e a ampliação juntos. TAA original: o TAA do jogo roda antes e o upscaler só amplia. Reinicie para aplicar.", "By the upscaler: DLSS or FSR 3.1 does the anti-aliasing and the upscaling together. The game's TAA: it runs first and the upscaler only enlarges. Restart to apply."));
+        Hint(L("TAA original: o TAA do jogo roda antes e o upscaler amplia. Pelo upscaler: o DLSS ou o FSR 3.1 faz também o anti-aliasing, mas partes de rostos podem sumir (2026-10-19). Reinicie para aplicar.", "The game's TAA: it runs first and the upscaler enlarges. By the upscaler: DLSS or FSR 3.1 also does the anti-aliasing, but parts of faces may vanish (2026-10-19). Restart to apply."));
     }
     if (s.order_aa != BbSettings::OrderAaGame && s.dlss_problem.load()) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "DLSS: %s", s.dlss_problem.load());
@@ -255,8 +255,12 @@ void Menu() {
     const char* const output_names[] = {L("1080p (a resolução do jogo)", "1080p (the game's resolution)"),
                                         L("1440p (ampliada pelo upscaler)", "1440p (upscaled)"),
                                         L("4K (ampliada pelo upscaler)", "4K (upscaled)")};
+    const int output_before = s.order_output.load();
     OrderCombo("output", L("Resolução de saída", "Output resolution"), s.order_output, output_values,
                output_names);
+    if (output_before == 1080 && s.order_output != 1080) {
+        s.order_aa.store(BbSettings::OrderAaGame); // the recommended anti-aliasing above 1080p
+    }
     if (s.order_output != 1080) {
         static const int upscaler_values[] = {BbSettings::UpscalerDlss, BbSettings::UpscalerFsr3,
                                               BbSettings::UpscalerFsr4, BbSettings::UpscalerFsr411,
