@@ -145,6 +145,11 @@ def UPSCALERS():
             ('fsr411', 'AMD FSR 4.1.1'), ('off', T('Nenhum (ampliação simples)', 'None (simple scaling)'))]
 
 
+def SHARPNESS():
+    return [('0.00', T('Desligada', 'Off')), ('0.15', '15%'), ('0.30', '30%'), ('0.50', '50%'),
+            ('0.75', '75%'), ('1.00', '100%')]
+
+
 UI_LANGUAGES = [('pt', 'Português'), ('en', 'English')]
 FPS_LIMITS = [('30', '30 FPS'), ('60', '60 FPS'), ('90', '90 FPS'), ('120', '120 FPS')]
 # PS4 system language codes (gpu/shim/bbport_settings.h GameLanguages).
@@ -160,7 +165,8 @@ def DISPLAY_MODES():
             ('2', T('Tela cheia exclusiva', 'Exclusive full screen')), ('0', T('Janela', 'Window'))]
 INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'fps_limit': '60',
                 'game_language': '17', 'photo_camera': '1', 'motion_blur': '1', 'dof': '1', 'fast_loading': '1', 'show_fps': '1',
-                'preload_shaders': '1', 'order_output': '1080', 'order_upscaler': 'dlss'}
+                'preload_shaders': '1', 'order_output': '1080', 'order_upscaler': 'dlss',
+                'sharpness': '0.30'}
 INI_FLAGS = ('photo_camera', 'motion_blur', 'dof', 'fast_loading', 'show_fps', 'preload_shaders')
 APP_DEFAULTS = {'game_dir': str(PORT_DIR.parent / TITLE_ID), 'display': '1',
                 'close_on_play': False, 'ui_language': UI_LANG}
@@ -181,6 +187,13 @@ def read_ini():
         values['order_output'] = '1080'
     if values.get('order_upscaler') not in ('dlss', 'fsr3', 'fsr4', 'fsr411', 'off'):
         values['order_upscaler'] = 'dlss'
+    try:  # the in-game slider saves any percentage: shown as the nearest choice
+        sharp = float(values.get('sharpness', '0.30'))
+    except ValueError:
+        sharp = 0.30
+    if values.get('sharpen') == '0':
+        sharp = 0.0
+    values['sharpness'] = min((o for o, _ in SHARPNESS()), key=lambda o: abs(float(o) - sharp))
     return values
 
 
@@ -681,6 +694,11 @@ class Launcher:
                    'placa.',
                    'Used when the output resolution is above 1080p. DLSS needs an NVIDIA RTX; FSR 4 needs '
                    'an AMD RX 9000 (or FP8/INT8 support); FSR 3.1 runs on any GPU.'))
+        self.row(f, T('Nitidez', 'Sharpening'), self.choice(f, 'sharpness', 'ini', SHARPNESS()),
+                 T('Nitidez aplicada depois do upscaler (DLSS ou FSR 3.1), quando a saída é maior que '
+                   '1080p. Também há um controle deslizante no menu do jogo (Insert), que vale na hora.',
+                   'Sharpening applied after the upscaler (DLSS or FSR 3.1) when the output is above '
+                   '1080p. The in-game menu (Insert) has a slider too, applied immediately.'))
         self.check(f, 'motion_blur', 'ini', T('Desfoque de movimento (motion blur)', 'Motion blur'),
                    T('O borrão do jogo em personagens e câmera em movimento. Também pode ser trocado '
                      'no menu do jogo (Insert), sem reiniciar.',

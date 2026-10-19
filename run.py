@@ -164,6 +164,8 @@ def toport_environment(env, config):
     if output:
         env.setdefault('BB_ORDER_OUTPUT', output)
         env.setdefault('BB_ORDER_UPSCALER', setting('order_upscaler', 'dlss'))
+        if env['BB_ORDER_UPSCALER'] == 'dlss':
+            env.setdefault('BB_DLSS', '1')  # also under the game's own TAA (order_aa=game)
         if aa == 'game':
             env.setdefault('BB_ORDER_OUTPUT_GAME_TAA', '1')
     env.setdefault('BB_LANGUAGE', setting('game_language', '17'))

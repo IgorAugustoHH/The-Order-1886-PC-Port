@@ -829,10 +829,11 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
 }
 
 void TemporalUpscaler::ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, bool ldr, u32 w,
-                                    u32 h) {
+                                    u32 h, float amount) {
     const auto& settings = BbSettings::Get();
-    const float extra = std::clamp(settings.sharpness.load(), 0.0f, 2.0f) - 1.0f;
-    if (!settings.sharpen || extra <= 0.0f) {
+    const float extra = amount >= 0.0f ? std::min(amount, 2.0f)
+                                       : std::clamp(settings.sharpness.load(), 0.0f, 2.0f) - 1.0f;
+    if ((amount < 0.0f && !settings.sharpen) || extra <= 0.0f) {
         return;
     }
     const auto device = instance.GetDevice();
@@ -2183,8 +2184,8 @@ bool TemporalUpscaler::RunOrder(u32 w, u32 h, u32 ow, u32 oh) {
         info.cameraFar = 3000.0f;
         info.cameraVerticalFovRadians = 0.7f;
         info.viewSpaceToMeters = 1.0f;
-        info.sharpness = std::min(settings.sharpness.load(), 1.0f);
-        info.enableSharpening = settings.sharpen ? VK_TRUE : VK_FALSE;
+        info.sharpness = 0.0f;
+        info.enableSharpening = VK_FALSE; // the menu's sharpening runs after (all providers)
         info.reset = reset ? VK_TRUE : VK_FALSE;
         info.frameId = frame_id++;
         FfxVkPortableUpscaleCreateInfo create_info{};
@@ -2203,7 +2204,11 @@ bool TemporalUpscaler::RunOrder(u32 w, u32 h, u32 ow, u32 oh) {
         }
     }
     if (ok) {
-        ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh);
+        // The menu's sharpening (RCAS, 0..1 = AMD's range, up to 2 extrapolated), the same for
+        // every provider: DLSS 2.5.1 and later ignore their own sharpness.
+        const auto& sharp = BbSettings::Get();
+        ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh,
+                     sharp.sharpen ? std::clamp(sharp.sharpness.load(), 0.0f, 2.0f) : 0.0f);
         barrier(vk::Image(output_image), vk::ImageLayout::eGeneral, all, rw,
                 vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eBlit,
                 vk::AccessFlagBits2::eTransferRead);
@@ -2578,7 +2583,9 @@ bool TemporalUpscaler::RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource
             .jitter_y = sign * jitter[1],
             .reset = reset,
             .frame_ms = frame_ms,
-            .sharpness = settings.sharpen ? std::min(settings.sharpness.load(), 1.0f) : 0.0f,
+            .sharpness = settings.sharpen && !order_mode
+                             ? std::min(settings.sharpness.load(), 1.0f)
+                             : 0.0f,
         });
     }
     if (!ok) {

@@ -242,8 +242,19 @@ void Menu() {
         const char* const upscaler_names[] = {"NVIDIA DLSS", "AMD FSR 3.1", "AMD FSR 4", "AMD FSR 4.1.1",
                                               L("Nenhum (ampliação simples)", "None (simple scaling)")};
         OrderCombo("upscaler", "Upscaler", s.order_upscaler, upscaler_values, upscaler_names);
+        ImGui::PushID("sharpness");
+        int sharpness = s.sharpen.load() ? int(s.sharpness.load() * 100.0f + 0.5f) : 0;
+        if (ImGui::SliderInt(L("Nitidez", "Sharpening"), &sharpness, 0, 100, "%d%%")) {
+            s.sharpness.store(float(sharpness) / 100.0f);
+            s.sharpen.store(true); // 0% is off; the launcher writes only sharpness
+            dirty = true;
+        }
+        ImGui::PopID();
     }
     Hint(L("Acima de 1080p, o jogo continua na própria resolução e o quadro pronto é ampliado pelo upscaler; a interface é desenhada na resolução de saída. Reinicie para aplicar.", "Above 1080p the game keeps its own resolution and the finished frame is upscaled; the UI is drawn at the output resolution. Restart to apply."));
+    if (s.order_output != 1080) {
+        Hint(L("Nitidez: aplicada depois do upscaler (DLSS e FSR 3.1), vale na hora.", "Sharpening: applied after the upscaler (DLSS and FSR 3.1), applies immediately."));
+    }
 
     OrderCheckbox("mblur", L("Desfoque de movimento (motion blur)", "Motion blur"), s.order_motion_blur);
     Hint(L("O borrão do jogo em personagens e câmera em movimento. Vale na hora.", "The game's blur on moving characters and camera. Applies immediately."));
