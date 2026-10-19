@@ -11,6 +11,7 @@
 #include <string_view>
 
 #include "video_core/renderer_vulkan/vk_dlss.h"
+#include "video_core/renderer_vulkan/scene_resolution.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -205,7 +206,11 @@ namespace {
 u32 Preset() {
     static const u32 value = [] {
         const char* env = std::getenv("BB_DLSS_PRESET");
-        return env && env[0] ? u32(std::strtoul(env, nullptr, 10)) : 11u;
+        // TOport: upscaling The Order's finished frame, K left copies of moving edges (ears,
+        // hair) for many frames; F, which drops history on disocclusion, has none (2026-10-19).
+        return env && env[0] ? u32(std::strtoul(env, nullptr, 10))
+               : SceneResolution::OrderUpscaling() ? 6u
+                                                   : 11u;
     }();
     return value;
 }
@@ -288,7 +293,11 @@ namespace {
 u32 Preset() {
     static const u32 value = [] {
         const char* env = std::getenv("BB_DLSS_PRESET");
-        return env && env[0] ? u32(std::strtoul(env, nullptr, 10)) : 11u;
+        // TOport: upscaling The Order's finished frame, K left copies of moving edges (ears,
+        // hair) for many frames; F, which drops history on disocclusion, has none (2026-10-19).
+        return env && env[0] ? u32(std::strtoul(env, nullptr, 10))
+               : SceneResolution::OrderUpscaling() ? 6u
+                                                   : 11u;
     }();
     return value;
 }
