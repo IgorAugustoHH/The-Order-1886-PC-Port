@@ -19,7 +19,6 @@
 #include "ffx_vk_portable.h"
 #include "video_core/host_shaders/upscale_merge_comp.h"
 #include "video_core/host_shaders/upscale_reactive_comp.h"
-#include "video_core/host_shaders/order_motion_mask_comp.h"
 #include "video_core/host_shaders/taa_comp.h"
 #include "video_core/host_shaders/taa_sharpen_comp.h"
 #include "video_core/host_shaders/taa_sharpen_ldr_comp.h"
@@ -705,8 +704,6 @@ void TemporalUpscaler::CreatePipelines() {
     storage_layout(2, taa_sharpen_desc_layout, taa_sharpen_pipeline_layout, sizeof(float));
     taa_sharpen_pipeline = compute(TAA_SHARPEN_COMP, *taa_sharpen_pipeline_layout);
     taa_sharpen_ldr_pipeline = compute(TAA_SHARPEN_LDR_COMP, *taa_sharpen_pipeline_layout);
-    // Two storage images and a float: the sharpen layout.
-    order_mask_pipeline = compute(ORDER_MOTION_MASK_COMP, *taa_sharpen_pipeline_layout);
     {
         std::array<vk::DescriptorSetLayoutBinding, 7> bindings{};
         for (u32 i = 0; i < bindings.size(); ++i) {
@@ -2103,35 +2100,6 @@ bool TemporalUpscaler::RunOrder(u32 w, u32 h, u32 ow, u32 oh) {
     }
     last_frame = now;
 
-    // The frame is already motion blurred: around moving characters the history would leave
-    // trails, so a reactive mask from the motion's discontinuities (toggle 1 << 56: off).
-    const bool motion_mask = !UseDlss() && !UseFsr4() && context && !BbToggle::Disabled(1ull << 56);
-    if (motion_mask) {
-        barrier(vk::Image(reactive_image), vk::ImageLayout::eUndefined, all,
-                vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
-                vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
-        const std::array<vk::DescriptorImageInfo, 2> mask_infos{{
-            {.imageView = *motion_view, .imageLayout = vk::ImageLayout::eGeneral},
-            {.imageView = *reactive_view, .imageLayout = vk::ImageLayout::eGeneral}}};
-        std::array<vk::WriteDescriptorSet, 2> mask_writes{};
-        for (u32 i = 0; i < mask_writes.size(); ++i) {
-            mask_writes[i] = {.dstBinding = i,
-                              .descriptorCount = 1,
-                              .descriptorType = vk::DescriptorType::eStorageImage,
-                              .pImageInfo = &mask_infos[i]};
-        }
-        const float strength = 0.9f; // AMD's mask maximum: never fully reactive
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *order_mask_pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *taa_sharpen_pipeline_layout,
-                                    0, mask_writes);
-        cmdbuf.pushConstants(*taa_sharpen_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
-                             sizeof(strength), &strength);
-        cmdbuf.dispatch((w + 7) / 8, (h + 7) / 8, 1);
-        barrier(vk::Image(reactive_image), vk::ImageLayout::eGeneral,
-                vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
-                vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
-    }
-
     bool ok = false;
     if (UseDlss()) {
         ok = RecordDlss(cmdbuf,
@@ -2165,13 +2133,6 @@ bool TemporalUpscaler::RunOrder(u32 w, u32 h, u32 ow, u32 oh) {
                                FFX_VK_PORTABLE_RESOURCE_STATE_UNORDERED_ACCESS);
         info.exposure.structSize = sizeof(info.exposure);
         info.reactiveMask.structSize = sizeof(info.reactiveMask);
-        if (motion_mask) {
-            info.reactiveMask = Describe(vk::Image(reactive_image), vk::Format::eR8Unorm, w, h,
-                                         vk::ImageUsageFlagBits::eStorage |
-                                             vk::ImageUsageFlagBits::eSampled,
-                                         vk::ImageAspectFlagBits::eColor,
-                                         FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
-        }
         info.transparencyAndCompositionMask.structSize =
             sizeof(info.transparencyAndCompositionMask);
         info.jitterOffset = {jitter[0], jitter[1]};
