@@ -636,7 +636,9 @@ class Launcher:
         ttk.Label(quick, text=T('Principal', 'Quick settings'), style='Section.TLabel').grid(
             row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
         self.row(quick, T('Anti-aliasing', 'Anti-aliasing'), self.aa_choice(quick, 26))
-        self.row(quick, T('Resolução', 'Resolution'), self.choice(quick, 'order_resolution', 'ini', RESOLUTIONS(), 26))
+        self.row(quick, T('Resolução do jogo', 'Game resolution'), self.choice(quick, 'order_resolution', 'ini', RESOLUTIONS(), 26))
+        self.row(quick, T('Resolução de saída', 'Output resolution'), self.choice(quick, 'order_output', 'ini', OUTPUTS(), 26))
+        self.row(quick, 'Upscaler', self.choice(quick, 'order_upscaler', 'ini', UPSCALERS(), 26))
         self.row(quick, T('Limite de quadros', 'Frame limit'), self.choice(quick, 'fps_limit', 'ini', FPS_LIMITS, 26))
         self.row(quick, T('Idioma', 'Game language'), self.choice(quick, 'game_language', 'ini', LANGUAGES, 26))
         self.var('game_dir', 'app').trace_add('write', lambda *_a: (self.refresh_status(), self.draw_banner()))
