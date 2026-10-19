@@ -45,20 +45,73 @@ def elf_offset(elf, target, length):
     raise ValueError(f'Resolucao: {target:#x} fora de segmento executavel')
 
 
+# The resolution code from 0x44ce86 to 0x44cf80 with every value the GoldHEN patches or another
+# 01.02 dump may change left out (None): the movl immediates (aspect, sizes, rectangles) and the
+# custom-size jump. Found anywhere in the executable segment, it gives the shift of the block.
+SIGNATURE_BASE = 0x44ce86
+SIGNATURE = bytes.fromhex(
+    'c7 85 18 fc ff ff 39 8e e3 3f c7 85 d0 fb ff ff 00 00 00 00 c7 85 d4 fb ff ff 00 00 00 00'
+    'c7 85 d8 fb ff ff 00 05 00 00 c7 85 dc fb ff ff d0 02 00 00 41 8b 85 cc 07 00 00 89 85 34'
+    'fc ff ff c7 85 44 fc ff ff 01 00 00 00 41 8b 85 c8 07 00 00 89 85 38 fc ff ff 41 8b 85 dc'
+    '07 00 00 b9 06 01 00 00 c4 e2 70 f7 c8 89 8d 3c fc ff ff a8 80 75 41 c7 85 84 fc ff ff 00'
+    '05 00 00 c7 85 88 fc ff ff d0 02 00 00 c7 85 d0 fb ff ff 00 00 00 00 c7 85 d4 fb ff ff 00'
+    '00 00 00 c7 85 d8 fb ff ff 00 05 00 00 c7 85 dc fb ff ff d0 02 00 00 e9 84 00 00 00 f6 c4'
+    '01 74 3e c7 85 84 fc ff ff 80 07 00 00 c7 85 88 fc ff ff 38 04 00 00 c7 85 d0 fb ff ff 00'
+    '00 00 00 c7 85 d4 fb ff ff 00 00 00 00 c7 85 d8 fb ff ff 80 07 00 00 c7 85 dc fb ff ff 38'
+    '04 00 00 eb 41 f6 c4 02 74 46')
+SIGNATURE_MASK = bytearray(b'' * len(SIGNATURE))
+for _start, _length in ((0x44ce8c, 4), (0x44ce96, 4), (0x44ce9e, 4), (0x44cea6, 4), (0x44ceae, 4),
+                        (0x44cef5, 2), (0x44cefd, 4), (0x44cf07, 4), (0x44cf11, 4), (0x44cf19, 4),
+                        (0x44cf21, 4), (0x44cf29, 4), (0x44cf3b, 2), (0x44cf43, 4), (0x44cf4d, 4),
+                        (0x44cf57, 4), (0x44cf61, 4), (0x44cf6b, 4), (0x44cf75, 4), (0x44cf7e, 2)):
+    for _i in range(_start - SIGNATURE_BASE, _start - SIGNATURE_BASE + _length):
+        SIGNATURE_MASK[_i] = 0
+
+
+def find_block(elf):
+    """Image address shift of the resolution block in this eboot (0 in the analyzed one)."""
+    phoff, = struct.unpack_from('<Q', elf, 0x20)
+    entry_size, count = struct.unpack_from('<HH', elf, 0x36)
+    anchor = SIGNATURE[:6]  # movl ..., -0x3e8(%rbp): the aspect store
+    found = []
+    for index in range(count):
+        kind, flags, offset, address, _, size, _, _ = struct.unpack_from(
+            '<IIQQQQQQ', elf, phoff + index * entry_size)
+        if kind != 1 or not flags & 1:
+            continue
+        pos = elf.find(anchor, offset, offset + size)
+        while pos != -1 and pos + len(SIGNATURE) <= offset + size:
+            if all(not m or elf[pos + i] == SIGNATURE[i] for i, m in enumerate(SIGNATURE_MASK)):
+                found.append(address + pos - offset - SIGNATURE_BASE)
+            pos = elf.find(anchor, pos + 1, offset + size)
+    if len(found) != 1:
+        raise ValueError(f'Resolucao: bloco de resolucao do 01.02 nao encontrado ({len(found)} '
+                         'ocorrencias); envie o last_run.log')
+    if found[0]:
+        print(f'Resolucao: bloco de resolucao deslocado {found[0]:+#x} neste eboot')
+    return found[0]
+
+
 def resolution_writes(elf, mode):
+    """Writes at the analyzed eboot's addresses, moved to where this eboot has the block."""
+    shift = find_block(elf)
+    return [(target + shift, data) for target, data in block_writes(elf, mode, shift)]
+
+
+def block_writes(elf, mode, shift):
     if mode == 'retail':
         if hashlib.sha256(elf).hexdigest() != ELF_SHA256:
             # Another dump of 01.02 can differ outside the patched code: the byte checks below decide.
             print('Resolucao: eboot com hash diferente; conferindo os bytes originais')
         out = []
         target, original, aspect = RETAIL_ASPECT
-        start = elf_offset(elf, target, len(original))
-        if elf[start:start + len(original)] != original:
+        start = elf_offset(elf, target + shift, len(original))
+        if elf[start:start + 6] != original[:6]:
             raise ValueError(f'Resolucao: proporcao original diverge em {target:#x}')
         out.append((target + 6, struct.pack('<f', aspect)))
         for target, original, value in RETAIL_SIZE:
-            start = elf_offset(elf, target, len(original))
-            if elf[start:start + len(original)] != original:
+            start = elf_offset(elf, target + shift, len(original))
+            if elf[start:start + 6] != original[:6]:
                 raise ValueError(f'Resolucao: tamanho padrao diverge em {target:#x}')
             out.append((target + 6, struct.pack('<I', value)))
         print('The Order: valores de varejo restaurados (1920x1080, camera 2.40:1; sem os patches '
@@ -71,15 +124,16 @@ def resolution_writes(elf, mode):
         print('Resolucao: eboot com hash diferente; conferindo os bytes originais')
     out = []
     for target, original, replacement in (WRITES_2160 if mode == '2160' else WRITES_1080):
-        start = elf_offset(elf, target, len(original))
-        if elf[start:start + len(original)] != original:
+        # The opcode and test must match; the jump itself may already be patched (GoldHEN).
+        start = elf_offset(elf, target + shift, len(original))
+        if elf[start:start + len(original) - 2] != original[:-2]:
             raise ValueError(f'Resolucao: bytes originais divergem em {target:#x}')
         out.append((target, replacement))
     if mode == '2160':
         # The 4K branch with the retail 2.40:1 camera (16:9 at high resolutions breaks, as at 1080p).
         target, original, aspect = RETAIL_ASPECT
-        start = elf_offset(elf, target, len(original))
-        if elf[start:start + len(original)] != original:
+        start = elf_offset(elf, target + shift, len(original))
+        if elf[start:start + 6] != original[:6]:
             raise ValueError(f'Resolucao: proporcao original diverge em {target:#x}')
         out.append((target + 6, struct.pack('<f', aspect)))
     print('The Order: resolucao forcada para 3840x2160 (ramo -use4K do jogo, camera 2.40:1, EXPERIMENTAL)'
@@ -93,8 +147,8 @@ def resolution_writes(elf, mode):
         if y:
             fields.append((RECT_Y, int(y)))
         for (target, original), value in fields:
-            start = elf_offset(elf, target, len(original))
-            if elf[start:start + len(original)] != original:
+            start = elf_offset(elf, target + shift, len(original))
+            if elf[start:start + 6] != original[:6]:
                 raise ValueError(f'Resolucao: instrucao do retangulo diverge em {target:#x}')
             out.append((target + 6, struct.pack('<I', value)))
         print(f'The Order: EXPERIMENTO retangulo {w}x{h} dentro de 1920x1080')
