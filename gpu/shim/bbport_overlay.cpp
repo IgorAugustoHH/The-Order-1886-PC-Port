@@ -215,8 +215,30 @@ void Menu() {
     const char* const aa_names[] = {L("TAA original do jogo", "The game's original TAA"), L("DLSS DLAA (resolução nativa)", "DLSS DLAA (native resolution)"),
                                            L("DLSS Qualidade", "DLSS Quality"), L("DLSS Equilibrado", "DLSS Balanced"),
                                            L("DLSS Desempenho", "DLSS Performance"), L("DLSS Ultra Desempenho", "DLSS Ultra Performance")};
-    OrderCombo("aa", "Anti-aliasing", s.order_aa, aa_values, aa_names);
-    Hint(L("DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo. Abaixo de DLAA, a cena é renderizada menor e reconstruída. Reinicie para aplicar.", "DLSS (NVIDIA RTX) replaces the game's own temporal resolve. Below DLAA the scene is rendered smaller and reconstructed. Restart to apply."));
+    if (s.order_output == 1080) {
+        OrderCombo("aa", "Anti-aliasing", s.order_aa, aa_values, aa_names);
+        Hint(L("DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo. Abaixo de DLAA, a cena é renderizada menor e reconstruída. Reinicie para aplicar.", "DLSS (NVIDIA RTX) replaces the game's own temporal resolve. Below DLAA the scene is rendered smaller and reconstructed. Restart to apply."));
+    } else {
+        // Above 1080p the choice is only whether the game's TAA runs before the upscaler; the
+        // DLSS modes below DLAA mean the same as DLAA here (shown as "by the upscaler").
+        const char* const out_names[] = {L("Pelo upscaler (recomendado)", "By the upscaler (recommended)"),
+                                         L("TAA original + upscaler", "The game's TAA + upscaler")};
+        const bool game_taa = s.order_aa == BbSettings::OrderAaGame;
+        ImGui::PushID("aa_out");
+        if (ImGui::BeginCombo("Anti-aliasing", out_names[game_taa ? 1 : 0])) {
+            if (ImGui::Selectable(out_names[0], !game_taa) && game_taa) {
+                s.order_aa.store(BbSettings::OrderAaDlaa);
+                dirty = true;
+            }
+            if (ImGui::Selectable(out_names[1], game_taa) && !game_taa) {
+                s.order_aa.store(BbSettings::OrderAaGame);
+                dirty = true;
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+        Hint(L("Pelo upscaler: o DLSS ou o FSR 3.1 faz o anti-aliasing e a ampliação juntos. TAA original: o TAA do jogo roda antes e o upscaler só amplia. Reinicie para aplicar.", "By the upscaler: DLSS or FSR 3.1 does the anti-aliasing and the upscaling together. The game's TAA: it runs first and the upscaler only enlarges. Restart to apply."));
+    }
     if (s.order_aa != BbSettings::OrderAaGame && s.dlss_problem.load()) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "DLSS: %s", s.dlss_problem.load());
     }

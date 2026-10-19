@@ -3180,6 +3180,17 @@ void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* pr
         const auto& sampler = stage.samplers[sampler_index];
         auto ssharp =
             prepared ? prepared->sampler_sharps[sampler_index] : sampler.GetSharp(stage);
+        // TOport: The Order's UI drawn scaled into the upscaled output (1440p: 1.33x): its
+        // point-sampled sprites (button icons) repeated uneven texel rows; bilinear keeps them
+        // smooth. 1:1 offscreen UI passes sample texel centres, unchanged either way.
+        if (upscaler->OrderUiPhase() && !sampler.is_depth) {
+            if (ssharp.xy_mag_filter == AmdGpu::Filter::Point) {
+                ssharp.xy_mag_filter.Assign(AmdGpu::Filter::Bilinear);
+            }
+            if (ssharp.xy_min_filter == AmdGpu::Filter::Point) {
+                ssharp.xy_min_filter.Assign(AmdGpu::Filter::Bilinear);
+            }
+        }
         const auto vk_sampler = texture_cache.GetSampler(
             ssharp, Regs().ta_bc_base, sampler.is_depth, sampler.is_depth ? 0.0f : sampler_lod_bias);
         image_infos.emplace_back(vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);

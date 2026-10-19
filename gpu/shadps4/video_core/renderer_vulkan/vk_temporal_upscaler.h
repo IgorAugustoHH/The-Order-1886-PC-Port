@@ -73,6 +73,10 @@ public:
     [[nodiscard]] bool OrderMode() const noexcept {
         return order_mode;
     }
+    /// The Order: the UI drawn after the upscale, into the output-size image.
+    [[nodiscard]] bool OrderUiPhase() const noexcept {
+        return order_mode && ui_phase;
+    }
     void SetOrderSource(const OrderDlss* source) noexcept {
         order_source = source;
     }

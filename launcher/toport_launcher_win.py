@@ -128,6 +128,12 @@ def AA_MODES():
             ('ultra', T('DLSS Ultra Desempenho', 'DLSS Ultra Performance'))]
 
 
+def AA_MODES_OUTPUT():
+    """Anti-aliasing above 1080p: whether the game's TAA runs before the upscaler."""
+    return [('dlaa', T('Pelo upscaler (recomendado)', 'By the upscaler (recommended)')),
+            ('game', T('TAA original + upscaler', "The game's TAA + upscaler"))]
+
+
 def RESOLUTIONS():
     return [('retail', T('Original do PS4: 1920 x 800 (2.40:1)', 'PS4 original: 1920 x 800 (2.40:1)')),
             ('1080', T('1920 x 1080 tela cheia (16:9)', '1920 x 1080 full screen (16:9)')),
@@ -451,6 +457,29 @@ class Launcher:
         var.trace_add('write', show)
         return box
 
+    def aa_choice(self, parent, width=36):
+        """The anti-aliasing combobox: the DLSS modes at 1080p; above it, only whether the
+        game's TAA runs before the upscaler (the DLSS modes then mean "by the upscaler")."""
+        var = self.var('order_aa', 'ini')
+        output = self.var('order_output', 'ini')
+        box = self.ttk.Combobox(parent, state='readonly', width=width)
+
+        def options():
+            return AA_MODES() if output.get() == '1080' else AA_MODES_OUTPUT()
+
+        def show(*_args):
+            current = var.get()
+            values = [v for v, _t in options()]
+            box.configure(values=[t for _v, t in options()])
+            if current not in values:
+                current = 'game' if current == 'game' else 'dlaa'
+            box.current(values.index(current) if current in values else 0)
+        show()
+        box.bind('<<ComboboxSelected>>', lambda _e: var.set(options()[box.current()][0]))
+        var.trace_add('write', show)
+        output.trace_add('write', show)
+        return box
+
     def next_row(self, parent):
         return parent.grid_size()[1]
 
@@ -606,7 +635,7 @@ class Launcher:
         quick.grid(row=0, column=1, sticky='nw')
         ttk.Label(quick, text=T('Principal', 'Quick settings'), style='Section.TLabel').grid(
             row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
-        self.row(quick, T('Anti-aliasing', 'Anti-aliasing'), self.choice(quick, 'order_aa', 'ini', AA_MODES(), 26))
+        self.row(quick, T('Anti-aliasing', 'Anti-aliasing'), self.aa_choice(quick, 26))
         self.row(quick, T('Resolução', 'Resolution'), self.choice(quick, 'order_resolution', 'ini', RESOLUTIONS(), 26))
         self.row(quick, T('Limite de quadros', 'Frame limit'), self.choice(quick, 'fps_limit', 'ini', FPS_LIMITS, 26))
         self.row(quick, T('Idioma', 'Game language'), self.choice(quick, 'game_language', 'ini', LANGUAGES, 26))
@@ -665,13 +694,18 @@ class Launcher:
                       T('Salvo em bbport.ini; o menu do jogo (Insert) altera os mesmos valores.',
                         'Saved in bbport.ini; the in-game menu (Insert) changes the same values.'))
         self.section(f, 'Anti-aliasing', top=4)
-        self.row(f, T('Modo', 'Mode'), self.choice(f, 'order_aa', 'ini', AA_MODES()),
-                 T('DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo. DLAA mantém a cena '
-                   'na resolução nativa; os outros modos renderizam a cena menor e reconstroem para a '
-                   'saída (mais FPS). TAA original é o anti-aliasing do PS4.',
-                   "DLSS (NVIDIA RTX) replaces the game's own temporal resolve. DLAA keeps the scene at "
-                   'native resolution; the other modes render a smaller scene and reconstruct it (more '
-                   "FPS). The original TAA is the PS4's anti-aliasing."))
+        self.row(f, T('Modo', 'Mode'), self.aa_choice(f),
+                 T('Em 1080p: DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo; DLAA '
+                   'mantém a cena na resolução nativa, os outros modos renderizam a cena menor e '
+                   'reconstroem (mais FPS); TAA original é o anti-aliasing do PS4. Acima de 1080p: '
+                   '"Pelo upscaler" deixa o DLSS ou o FSR 3.1 fazer o anti-aliasing e a ampliação; '
+                   '"TAA original + upscaler" roda o TAA do jogo antes e o upscaler só amplia.',
+                   "At 1080p: DLSS (NVIDIA RTX) replaces the game's own temporal resolve; DLAA keeps "
+                   'the scene at native resolution, the other modes render a smaller scene and '
+                   "reconstruct it (more FPS); the original TAA is the PS4's anti-aliasing. Above "
+                   '1080p: "By the upscaler" lets DLSS or FSR 3.1 do the anti-aliasing and the '
+                   "upscaling; \"The game's TAA + upscaler\" runs the game's TAA first and the "
+                   'upscaler only enlarges.'))
         self.section(f, T('Resolução', 'Resolution'))
         self.row(f, T('Resolução do jogo', 'Game resolution'), self.choice(f, 'order_resolution', 'ini', RESOLUTIONS()),
                  T('Original: como no PS4, cena em 2.40:1 com faixas pretas e a iluminação correta '
