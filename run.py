@@ -107,6 +107,7 @@ order_aa=quality
 order_resolution=retail
 game_language=17
 photo_camera=1
+motion_blur=1
 fast_loading=1
 preload_shaders=1
 fps_limit=60

@@ -84,6 +84,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
                 v.game_language = i;
             }
         }
+    } else if (key == "motion_blur") {
+        v.order_motion_blur = i != 0;
     } else if (key == "photo_camera") {
         v.photo_camera = i != 0;
     } else if (key == "fast_loading") {
@@ -274,6 +276,7 @@ void Save() {
                  int(v.photo_camera.load()), int(v.fast_loading.load()), v.fps_limit.load(),
                  int(v.preload_shaders.load()), v.ui_english.load() ? "en" : "pt");
     const int upscaler = v.order_upscaler.load();
+    std::fprintf(file, "motion_blur=%d\n", int(v.order_motion_blur.load()));
     std::fprintf(file, "order_output=%d\norder_upscaler=%s\n", v.order_output.load(),
                  upscaler == UpscalerFsr3     ? "fsr3"
                  : upscaler == UpscalerFsr4   ? "fsr4"

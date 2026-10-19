@@ -200,6 +200,7 @@ private:
     void Resolve();
     void DepthStencilCopy(bool is_depth, bool is_stencil);
     void EliminateFastClear();
+    bool SkipOrderMotionBlur(const GraphicsPipeline* pipeline);
 
     void UpdateDynamicState(const GraphicsPipeline* pipeline, bool is_indexed) const;
     void UpdateViewportScissorState() const;

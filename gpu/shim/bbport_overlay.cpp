@@ -245,6 +245,9 @@ void Menu() {
     }
     Hint(L("Acima de 1080p, o jogo continua na própria resolução e o quadro pronto é ampliado pelo upscaler; a interface é desenhada na resolução de saída. Reinicie para aplicar.", "Above 1080p the game keeps its own resolution and the finished frame is upscaled; the UI is drawn at the output resolution. Restart to apply."));
 
+    OrderCheckbox("mblur", L("Desfoque de movimento (motion blur)", "Motion blur"), s.order_motion_blur);
+    Hint(L("O borrão do jogo em personagens e câmera em movimento. Vale na hora.", "The game's blur on moving characters and camera. Applies immediately."));
+
     ImGui::SeparatorText(L("Desempenho", "Performance"));
     static const unsigned fps_values[] = {30, 60, 90, 120};
     static const char* const fps_names[] = {"30 FPS", "60 FPS", "90 FPS", "120 FPS"};

@@ -10,6 +10,7 @@
 #include <thread>
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
+#include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "video_core/renderer_vulkan/dof_capture.h"
@@ -1249,6 +1250,60 @@ static bool SkippedSunShadowDraw(const GraphicsPipeline* pipeline, const AmdGpu:
            regs.depth_buffer.Pitch() == 1024 && (!fs || fs->mrt_mask == 0);
 }
 
+// TOport: The Order: 1886's motion blur is one full-screen pass (PS 0x574764e2) writing the scene
+// from the resolve's output, the velocity and its tile maxima (passes #63-#68). With motion blur
+// off in the menu, the resolve's output is copied to its target instead of drawing it.
+bool Rasterizer::SkipOrderMotionBlur(const GraphicsPipeline* pipeline) {
+    constexpr u64 MotionBlurPs = 0x574764e2ull;
+    if (BbSettings::Get().order_motion_blur.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    if (!ps || ps->pgm_hash != MotionBlurPs || !cb_descs[0].first) {
+        return false;
+    }
+    const VideoCore::ImageId target_id = cb_descs[0].first;
+    auto& target = texture_cache.GetImage(target_id);
+    VideoCore::ImageId source_id{};
+    for (const auto id : bound_images) {
+        const auto& image = texture_cache.GetImage(id);
+        if (id != target_id && image.info.pixel_format == target.info.pixel_format &&
+            image.info.num_samples == 1 && image.info.size.width == target.info.size.width &&
+            image.info.size.height == target.info.size.height) {
+            source_id = id;
+        }
+    }
+    static bool logged = false;
+    if (!source_id) {
+        if (!logged) {
+            logged = true;
+            std::printf("TOport: motion blur pass kept (no source image recognized)\n");
+        }
+        return false;
+    }
+    if (!logged) {
+        logged = true;
+        std::printf("TOport: motion blur off (the resolve's output copied, %ux%u)\n",
+                    target.info.size.width, target.info.size.height);
+    }
+    auto& source = texture_cache.GetImage(source_id);
+    scheduler.EndRendering();
+    runtime.Transit(&source, vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+    runtime.Transit(&target, vk::ImageLayout::eTransferDstOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+    runtime.FlushBarriers();
+    const vk::ImageCopy region{
+        .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .extent = {target.info.size.width, target.info.size.height, 1},
+    };
+    scheduler.CommandBuffer().copyImage(
+        vk::Image(source.backing->image), vk::ImageLayout::eTransferSrcOptimal,
+        vk::Image(target.backing->image), vk::ImageLayout::eTransferDstOptimal, region);
+    return true;
+}
+
 void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
                             bool is_indexed, u32 index_offset) {
     if (SkippedShader(pipeline, &Regs()) || SkippedSunShadowDraw(pipeline, Regs())) {
@@ -1300,6 +1355,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const bool inputs_resolved = draw_inputs.resolved;
     draw_inputs.pending = false;
     if (!bound) {
+        return;
+    }
+    if (SkipOrderMotionBlur(pipeline)) {
         return;
     }
     const auto state = BeginRendering(pipeline);

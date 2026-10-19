@@ -159,9 +159,9 @@ def DISPLAY_MODES():
     return [('1', T('Tela cheia sem bordas', 'Borderless full screen')),
             ('2', T('Tela cheia exclusiva', 'Exclusive full screen')), ('0', T('Janela', 'Window'))]
 INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'fps_limit': '60',
-                'game_language': '17', 'photo_camera': '1', 'fast_loading': '1', 'show_fps': '1',
+                'game_language': '17', 'photo_camera': '1', 'motion_blur': '1', 'fast_loading': '1', 'show_fps': '1',
                 'preload_shaders': '1', 'order_output': '1080', 'order_upscaler': 'dlss'}
-INI_FLAGS = ('photo_camera', 'fast_loading', 'show_fps', 'preload_shaders')
+INI_FLAGS = ('photo_camera', 'motion_blur', 'fast_loading', 'show_fps', 'preload_shaders')
 APP_DEFAULTS = {'game_dir': str(PORT_DIR.parent / TITLE_ID), 'display': '1',
                 'close_on_play': False, 'ui_language': UI_LANG}
 
@@ -681,6 +681,11 @@ class Launcher:
                    'placa.',
                    'Used when the output resolution is above 1080p. DLSS needs an NVIDIA RTX; FSR 4 needs '
                    'an AMD RX 9000 (or FP8/INT8 support); FSR 3.1 runs on any GPU.'))
+        self.check(f, 'motion_blur', 'ini', T('Desfoque de movimento (motion blur)', 'Motion blur'),
+                   T('O borrão do jogo em personagens e câmera em movimento. Também pode ser trocado '
+                     'no menu do jogo (Insert), sem reiniciar.',
+                     "The game's blur on moving characters and camera. Can also be switched in the "
+                     'in-game menu (Insert) without restarting.'))
 
     def build_display(self):
         f = self.page('display', T('Tela e desempenho', 'Display & performance'),

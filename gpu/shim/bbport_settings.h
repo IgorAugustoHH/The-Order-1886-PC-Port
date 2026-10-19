@@ -103,6 +103,7 @@ struct Values {
     std::atomic<int> order_resolution{800};      ///< 800 retail (2.40:1), 1080 or 720 16:9
     std::atomic<int> game_language{17};          ///< PS4 system language code (17 pt-BR)
     std::atomic<bool> photo_camera{true};        ///< free photo camera in cutscenes
+    std::atomic<bool> order_motion_blur{true};   ///< the game's motion blur (live)
     std::atomic<bool> fast_loading{true};        ///< compute pipe parts ade + command pipe
     std::atomic<bool> preload_shaders{true};     ///< build last sessions' pipelines at start
     std::atomic<bool> ui_english{false};         ///< menu language: ui_language=en (launcher)
