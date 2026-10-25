@@ -1,5 +1,7 @@
 # The Order: 1886 para Windows — TOport
 
+[![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/486-the-order-1886/)
+
 **The Order: 1886 rodando nativo no Windows 10/11: câmera cinematográfica original do PS4, NVIDIA DLSS,
 até 120 FPS, 23 idiomas e um launcher próprio.**
 
