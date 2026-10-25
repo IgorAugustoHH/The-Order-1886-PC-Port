@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Production Scheduler + Vulkan on the actual device, no window, game or guest dump.
 #include "video_core/renderer_vulkan/vk_instance.h"

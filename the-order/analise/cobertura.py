@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Cobertura das importações do The Order pelo runtime do BBPort.
 
 Uma importação está coberta se: (1) o NID aparece literal no runtime/shim da GPU, (2) o NID é o

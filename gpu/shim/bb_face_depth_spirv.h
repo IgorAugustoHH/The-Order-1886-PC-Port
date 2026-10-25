@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Targeted mitigation for facial depth conflicts replay-proven in runs39/48/53.
 // This is not a translation of a newly identified guest register.
 #pragma once

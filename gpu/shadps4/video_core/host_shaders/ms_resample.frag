@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport (The Order: 1886): nearest resample between a native scene target and its reduced proxy
 // when either is multisampled (blits do not take multisampled images). The pipeline rasterizes

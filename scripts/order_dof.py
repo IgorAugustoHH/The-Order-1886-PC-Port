@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Withdrawn global DoF experiment; historical static analysis only.
 
 The render dispatch selects either CC...DoF at 0xcccee0 or the already

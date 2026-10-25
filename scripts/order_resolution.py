@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """BB_ORDER_RESOLUTION=1080: The Order 01.02 picks 1280x720 unless its (developer) resolution
 flags select another size (0x44cedc: flags bit 7 = custom size, bit 8 = 1920x1080, bit 9 = 4K).
 Both branches are forced to the 1920x1080 case in the loaded image; files stay intact.

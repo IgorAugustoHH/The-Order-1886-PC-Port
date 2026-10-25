@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Opt-in cutscene photo-camera experiment for the verified Order 01.02 image.
 
 Only the camera-control branch in PhotoCamera is bypassed. The native loader

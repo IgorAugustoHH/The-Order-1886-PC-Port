@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Descobre o nome das importações que faltam no runtime: o NID é um hash SHA-1 (com sal fixo)
 do nome do símbolo, então testamos nomes conhecidos da API do PS4."""
 import base64

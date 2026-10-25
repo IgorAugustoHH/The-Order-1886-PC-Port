@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+// SPDX-License-Identifier: GPL-2.0-or-later
 /* Kernel event flags: a 64-bit pattern that threads set/clear and wait on.
  * Wait modes: AND (all bits) or OR (any bit), optionally clearing all or the
  * waited bits on release. Waiters are woken by broadcast and re-check. */

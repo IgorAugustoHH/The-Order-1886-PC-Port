@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+// SPDX-License-Identifier: GPL-2.0-or-later
 #include "bb_face_depth_fix.h"
 #include "bb_face_depth_spirv.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"

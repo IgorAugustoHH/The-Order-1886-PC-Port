@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Add a NID -> name entry to src/import_names.inc for every symbol name the runtime exports.
 
 runtime_lookup() finds an import by NID -> name -> RuntimeExport table, and import_names.inc only

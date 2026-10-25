@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Mede quanto de CPU cada thread do bb-probe usa (nome via GetThreadDescription).
 Uso: python cpu_threads.py [segundos_de_amostra]   (o jogo precisa estar aberto)"""
 import ctypes

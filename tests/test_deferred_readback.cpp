@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Deferred readbacks (BufferCache::DeferReadback): a guest write beside GPU-written bytes lets
 // the guest go on while those bytes travel back. Models the arena (GPU copy), guest memory and

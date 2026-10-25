@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright 2026 Igor Augusto and TOport contributors (https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)
 # SPDX-License-Identifier: GPL-2.0-or-later
 """TOport: launcher for The Order: 1886 on Windows (Tkinter), in the style of the BBPort one.
 
