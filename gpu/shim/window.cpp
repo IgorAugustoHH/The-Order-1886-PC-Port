@@ -1,12 +1,43 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <SDL3/SDL.h>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "sdl_window.h"
 #include "bbport_overlay.h"
+
+// TOport: mouse look. While the game has the mouse (window focused, no menu or text entry),
+// relative mode hides and holds the cursor and the motion is summed here for runtime_pad.c,
+// which reads it as the right stick (bbgpu_mouse_take). BB_MOUSE=0 leaves the mouse alone.
+namespace {
+std::mutex mouse_mutex;
+float mouse_dx = 0.0f, mouse_dy = 0.0f;
+std::atomic<bool> mouse_held{false};
+bool MouseEnabled() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_MOUSE");
+        return !(env && env[0] == '0');
+    }();
+    return enabled;
+}
+} // namespace
+
+extern "C" int bbgpu_mouse_take(float* dx, float* dy, uint32_t* buttons) {
+    std::scoped_lock lock{mouse_mutex};
+    *dx = mouse_dx;
+    *dy = mouse_dy;
+    mouse_dx = mouse_dy = 0.0f;
+    if (!mouse_held.load(std::memory_order_relaxed)) {
+        *buttons = 0;
+        return 0;
+    }
+    *buttons = SDL_GetMouseState(nullptr, nullptr);
+    return 1;
+}
 
 namespace Frontend {
 
@@ -112,8 +143,23 @@ bool WindowSDL::PollEvents() {
     if (!text_active) {
         BbOverlay::UpdateTextInput(window);
     }
+    if (MouseEnabled()) {
+        const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+        const bool hold = focused && !text_active && !BbOverlay::CapturesInput();
+        if (hold != mouse_held.load(std::memory_order_relaxed)) {
+            SDL_SetWindowRelativeMouseMode(window, hold);
+            mouse_held.store(hold, std::memory_order_relaxed);
+            std::scoped_lock lock{mouse_mutex};
+            mouse_dx = mouse_dy = 0.0f;
+        }
+    }
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_MOUSE_MOTION && mouse_held.load(std::memory_order_relaxed)) {
+            std::scoped_lock lock{mouse_mutex};
+            mouse_dx += event.motion.xrel;
+            mouse_dy += event.motion.yrel;
+        }
         if (text_active && (event.type == SDL_EVENT_TEXT_INPUT || event.type == SDL_EVENT_KEY_DOWN)) {
             std::scoped_lock lock{text_mutex};
             if (event.type == SDL_EVENT_TEXT_INPUT) {

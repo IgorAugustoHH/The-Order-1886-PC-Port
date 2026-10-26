@@ -36,7 +36,8 @@ sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR
 - **Menu dentro do jogo** com **Insert** (teclado): troque DLSS, resolução,
   limite de quadros e idioma sem sair do jogo.
 - **Câmera livre nas cutscenes** (modo foto).
-- Controle de PlayStation, Xbox ou teclado.
+- Controle de PlayStation, Xbox ou **teclado e mouse** (WASD andar, mouse câmera, botão direito mirar,
+  botão esquerdo atirar), que funcionam junto com o controle.
 
 ## Desempenho (i5-10400F, RTX 2060 6 GB, 16 GB de RAM)
 | Configuração | Cenas pesadas |

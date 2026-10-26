@@ -1,11 +1,15 @@
-/* libScePad on SDL3 gamepads, with a keyboard fallback. SDL events are pumped
- * by the window thread (gpu/shim/window.cpp); here state is only sampled.
+/* libScePad on SDL3 gamepads, keyboard and mouse. SDL events are pumped by the window
+ * thread (gpu/shim/window.cpp); here state is only sampled. The keyboard and the mouse work
+ * together with a gamepad (TOport): each control adds to the gamepad's.
  *
- * Keyboard layout (when no gamepad is connected):
- *   WASD left stick, arrow keys right stick, Space Cross, LShift Circle,
- *   E Square, Q Triangle, 1 L1, 3 R1, R L2, F R2, Z L3, C R3,
- *   Enter Options, Tab left touchpad, Backspace right touchpad,
- *   IJKL d-pad (I up, K down, J left, L right). */
+ * Keyboard and mouse layout:
+ *   WASD left stick, mouse (or arrow keys) right stick / camera,
+ *   left mouse button R2, right mouse button L2, middle button R3,
+ *   Space Cross, LShift Circle, E Square, Q Triangle, 1 L1, 3 R1, R L2, F R2, Z L3, C R3,
+ *   Enter or Esc Options, Tab left touchpad, Backspace right touchpad,
+ *   IJKL d-pad (I up, K down, J left, L right).
+ *   BB_MOUSE=0 leaves the mouse alone; BB_MOUSE_SENS (default 6) scales the camera while
+ *   aiming; without aiming the mouse turns it like the arrow keys (BB_MOUSE_LOOK_MIN, 1 px). */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
@@ -89,6 +93,66 @@ static SDL_Gamepad *current_gamepad(void) {
     }
     return gamepad;
 }
+/* A stick axis pushed by keys: -1, 0 or +1 replaces the current value when held. */
+static void key_axis(uint8_t *axis_value, int negative, int positive) {
+    if (negative!=positive) *axis_value=negative ? 0 : 255;
+}
+static float env_float(const char *name, float fallback) {
+    const char *e=getenv(name);
+    return e && *e ? (float)atof(e) : fallback;
+}
+/* Mouse motion as a right stick deflection: the camera turns while the mouse moves. Aiming
+ * (right button or L2) scales the motion (BB_MOUSE_SENS), which played well. The free camera
+ * works like the arrow keys instead: motion past BB_MOUSE_LOOK_MIN pixels pushes the stick all
+ * the way in its direction, since smaller deflections turned it stiffly. */
+static uint8_t mouse_axis(uint8_t current, float delta, int aiming) {
+    static float sens=-1.0f, look_min=-1.0f;
+    if (sens<0) {
+        sens=env_float("BB_MOUSE_SENS",6.0f);
+        look_min=env_float("BB_MOUSE_LOOK_MIN",1.0f);
+    }
+    if (delta==0.0f) return current;
+    if (!aiming) {
+        if (delta>=look_min) return 255;
+        if (delta<=-look_min) return 0;
+        return current;
+    }
+    float v=(float)current-128.0f+delta*sens;
+    if (v>127.0f) v=127.0f;
+    if (v<-128.0f) v=-128.0f;
+    return (uint8_t)(int)(v+128.0f);
+}
+/* Keyboard and mouse, added to the gamepad's state (TOport: they work with a pad connected). */
+static void sample_keyboard_mouse(PadData *d, const bool *k) {
+    if (k) {
+        static const struct { SDL_Scancode key; uint32_t ps; } keys[]={
+            {SDL_SCANCODE_SPACE,BTN_CROSS}, {SDL_SCANCODE_LSHIFT,BTN_CIRCLE}, {SDL_SCANCODE_E,BTN_SQUARE},
+            {SDL_SCANCODE_Q,BTN_TRIANGLE}, {SDL_SCANCODE_1,BTN_L1}, {SDL_SCANCODE_3,BTN_R1},
+            {SDL_SCANCODE_R,BTN_L2}, {SDL_SCANCODE_F,BTN_R2}, {SDL_SCANCODE_Z,BTN_L3}, {SDL_SCANCODE_C,BTN_R3},
+            {SDL_SCANCODE_RETURN,BTN_OPTIONS}, {SDL_SCANCODE_ESCAPE,BTN_OPTIONS},
+            {SDL_SCANCODE_I,BTN_UP}, {SDL_SCANCODE_K,BTN_DOWN}, {SDL_SCANCODE_J,BTN_LEFT}, {SDL_SCANCODE_L,BTN_RIGHT},
+        };
+        for (size_t i=0;i<sizeof(keys)/sizeof(*keys);++i) if (k[keys[i].key]) d->buttons|=keys[i].ps;
+        if (k[SDL_SCANCODE_TAB]) touch_click(d,0);
+        if (k[SDL_SCANCODE_BACKSPACE]) touch_click(d,1);
+        key_axis(&d->left_x,k[SDL_SCANCODE_A],k[SDL_SCANCODE_D]);
+        key_axis(&d->left_y,k[SDL_SCANCODE_W],k[SDL_SCANCODE_S]);
+        key_axis(&d->right_x,k[SDL_SCANCODE_LEFT],k[SDL_SCANCODE_RIGHT]);
+        key_axis(&d->right_y,k[SDL_SCANCODE_UP],k[SDL_SCANCODE_DOWN]);
+    }
+    float dx=0, dy=0;
+    uint32_t mouse=0;
+    if (bbgpu_mouse_take(&dx,&dy,&mouse)) {
+        if (mouse & SDL_BUTTON_LMASK) d->buttons|=BTN_R2;
+        if (mouse & SDL_BUTTON_RMASK) d->buttons|=BTN_L2;
+        const int aiming=(d->buttons & BTN_L2)!=0 || d->l2>30;
+        d->right_x=mouse_axis(d->right_x,dx,aiming);
+        d->right_y=mouse_axis(d->right_y,dy,aiming);
+        if (mouse & SDL_BUTTON_MMASK) d->buttons|=BTN_R3;
+    }
+    if (d->buttons & BTN_L2) d->l2=255;
+    if (d->buttons & BTN_R2) d->r2=255;
+}
 static void sample_host(PadData *d) {
     memset(d,0,sizeof(*d));
     d->left_x=d->left_y=d->right_x=d->right_y=128;
@@ -128,27 +192,8 @@ static void sample_host(PadData *d) {
         }
         // Back/Select on pads without a touch surface is a left-side click.
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
-        if (k && k[SDL_SCANCODE_TAB]) touch_click(d,0);
-        if (k && k[SDL_SCANCODE_BACKSPACE]) touch_click(d,1);
-        return;
     }
-    if (!k) return;
-    static const struct { SDL_Scancode key; uint32_t ps; } keys[]={
-        {SDL_SCANCODE_SPACE,BTN_CROSS}, {SDL_SCANCODE_LSHIFT,BTN_CIRCLE}, {SDL_SCANCODE_E,BTN_SQUARE},
-        {SDL_SCANCODE_Q,BTN_TRIANGLE}, {SDL_SCANCODE_1,BTN_L1}, {SDL_SCANCODE_3,BTN_R1},
-        {SDL_SCANCODE_R,BTN_L2}, {SDL_SCANCODE_F,BTN_R2}, {SDL_SCANCODE_Z,BTN_L3}, {SDL_SCANCODE_C,BTN_R3},
-        {SDL_SCANCODE_RETURN,BTN_OPTIONS},
-        {SDL_SCANCODE_I,BTN_UP}, {SDL_SCANCODE_K,BTN_DOWN}, {SDL_SCANCODE_J,BTN_LEFT}, {SDL_SCANCODE_L,BTN_RIGHT},
-    };
-    for (size_t i=0;i<sizeof(keys)/sizeof(*keys);++i) if (k[keys[i].key]) d->buttons|=keys[i].ps;
-    if (k[SDL_SCANCODE_TAB]) touch_click(d,0);
-    if (k[SDL_SCANCODE_BACKSPACE]) touch_click(d,1);
-    if (d->buttons & BTN_L2) d->l2=255;
-    if (d->buttons & BTN_R2) d->r2=255;
-    d->left_x=(uint8_t)(128-(k[SDL_SCANCODE_A] ? 128 : 0)+(k[SDL_SCANCODE_D] ? 127 : 0));
-    d->left_y=(uint8_t)(128-(k[SDL_SCANCODE_W] ? 128 : 0)+(k[SDL_SCANCODE_S] ? 127 : 0));
-    d->right_x=(uint8_t)(128-(k[SDL_SCANCODE_LEFT] ? 128 : 0)+(k[SDL_SCANCODE_RIGHT] ? 127 : 0));
-    d->right_y=(uint8_t)(128-(k[SDL_SCANCODE_UP] ? 128 : 0)+(k[SDL_SCANCODE_DOWN] ? 127 : 0));
+    sample_keyboard_mouse(d,k);
 }
 
 /* BB_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated
