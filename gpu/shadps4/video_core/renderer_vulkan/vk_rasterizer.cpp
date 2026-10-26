@@ -2425,7 +2425,7 @@ void Rasterizer::ResolveIndexBuffer(u32 index_offset, bool is_indirect) {
     index_bind = {buffer->Handle(), offset, index_type,
                   max_indices != 0 ? index_buffer_size / index_size : ~0u};
 }
-// TEST (BB_INDEX_CLAMP=1), from JulioCacko/The-Order-1886_pc 386715a1 + 471969f7 (GPL-2.0):
+// On by default (BB_INDEX_CLAMP=0: off), from JulioCacko/The-Order-1886_pc 386715a1 + 471969f7 (GPL-2.0):
 // The Order builds indexed indirect arguments on the GPU (count * 3 - 6 from a per-object
 // record); a record with count 0 gives 0xFFFFFFFA indices. GCN reads indices past
 // INDEX_BUFFER_SIZE as 0 (degenerate primitives), Vulkan has no such bound: the GPU spent
@@ -2435,10 +2435,8 @@ std::pair<vk::Buffer, u64> Rasterizer::ClampIndexedIndirect(const VideoCore::Buf
                                                             u64 offset, u32 count, u32 stride) {
     static const bool enabled = [] {
         const char* env = std::getenv("BB_INDEX_CLAMP");
-        const bool on = env && env[0] == '1';
-        if (on) {
-            std::printf("Indirect index clamp: on (TEST, BB_INDEX_CLAMP=1)\n");
-        }
+        const bool on = !(env && env[0] == '0');
+        std::printf("Indirect index clamp: %s (BB_INDEX_CLAMP=0 turns it off)\n", on ? "on" : "off");
         return on;
     }();
     const u32 limit = index_bind.count;

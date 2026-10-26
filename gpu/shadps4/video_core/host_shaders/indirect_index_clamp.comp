@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 JulioCacko (https://github.com/JulioCacko/The-Order-1886_pc), commit 386715a1
 // SPDX-License-Identifier: GPL-2.0-or-later
-// TEST (BB_INDEX_CLAMP=1): indexed indirect draw arguments with the index count clamped to the
+// On by default (BB_INDEX_CLAMP=0: off): indexed indirect draw arguments with the index count clamped to the
 // bound index buffer (vk_rasterizer.cpp, ClampIndexedIndirect). GCN fetches indices past
 // INDEX_BUFFER_SIZE as 0: degenerate primitives that draw nothing. Vulkan has no such bound, so a
 // GPU-written count of 0xFFFFFFFA kept the GPU busy for minutes. One invocation per draw record.

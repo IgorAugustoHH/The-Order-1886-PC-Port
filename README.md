@@ -9,7 +9,7 @@ O jogo roda direto no processador do PC, sem emulação de CPU. Só o que muda e
 as funções do sistema da Sony e a GPU, cujos comandos e shaders viram Vulkan. Sem janela de emulador,
 sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR.
 
-**Versão atual: [v0.1.3](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/tag/v0.1.3) (pré-lançamento)** ·
+**Versão atual: [v0.1.4](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/tag/v0.1.4) (pré-lançamento)** ·
 **[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)**
 
 ![Londres vista do telhado, rodando nativo no PC](docs/screenshots/londres-telhado.jpg)
@@ -116,6 +116,9 @@ O TOport só existe porque outras pessoas abriram o caminho e publicaram o seu t
   [PR #4798](https://github.com/shadps4-emu/shadPS4/pull/4798) ajudaram na investigação das sombras.
 - **illusion0001**, pelos [patches de The Order](https://github.com/illusion0001/PS4-PS5-Game-Patch)
   que mostraram onde ficam a resolução e a proporção da câmera do jogo.
+- **[mfrafael](https://github.com/mfrafael)**, pela saída experimental em 1440p/4K com DLSS e FSR 3.1.
+- **[JulioCacko](https://github.com/JulioCacko/The-Order-1886_pc)**, pelo limite de índices nos draws
+  indiretos que evita a imagem congelar.
 - **Ready at Dawn**, por criar The Order: 1886 e pela palestra do SIGGRAPH 2015 sobre o renderizador,
   que guiou a integração do DLSS.
 - **NVIDIA**, pelo DLSS.

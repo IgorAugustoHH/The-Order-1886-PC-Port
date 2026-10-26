@@ -305,7 +305,7 @@ private:
     void ResolveVertexBuffers(const GraphicsPipeline* pipeline, const PreparedDraw* prepared);
     void EmitVertexBuffers();
     void ResolveIndexBuffer(u32 index_offset, bool is_indirect = false);
-    /// TEST (BB_INDEX_CLAMP=1, JulioCacko/The-Order-1886_pc 386715a1 + 471969f7): copies the
+    /// On by default (BB_INDEX_CLAMP=0: off; JulioCacko/The-Order-1886_pc 386715a1 + 471969f7): copies the
     /// indexed indirect records into clamped_args with each index count bounded by
     /// index_bind.count; returns where the draw reads them (the source when not clamped).
     std::pair<vk::Buffer, u64> ClampIndexedIndirect(const VideoCore::Buffer* args, u64 offset,
