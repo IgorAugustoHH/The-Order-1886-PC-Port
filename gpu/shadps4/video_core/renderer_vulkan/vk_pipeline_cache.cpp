@@ -436,6 +436,18 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     StartAsyncCompilers();
     startup_mark("async compiler start end");
     if (!persist) {
+        // TOport: "Preload shaders" reads the recent pipelines list, and only the driver cache
+        // saver below wrote it, so with that cache off (the default) the list never existed.
+        // Without the cache this thread keeps just the list: every 30 s and at exit.
+        driver_cache_saver = std::jthread([this](std::stop_token stop) {
+            for (u32 ticks = 0; !stop.stop_requested(); ++ticks) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                if (ticks % 60 == 59) {
+                    SaveRecentPipelines();
+                }
+            }
+            SaveRecentPipelines();
+        });
         return;
     }
     std::printf("Driver pipeline cache: loaded %.1f MiB from %s\n",
