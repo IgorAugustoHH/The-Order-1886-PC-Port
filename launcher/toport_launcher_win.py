@@ -637,12 +637,11 @@ class Launcher:
         quick.grid(row=0, column=1, sticky='nw')
         ttk.Label(quick, text=T('Principal', 'Quick settings'), style='Section.TLabel').grid(
             row=0, column=0, columnspan=2, sticky='w', pady=(0, 2))
-        self.row(quick, T('Anti-aliasing', 'Anti-aliasing'), self.aa_choice(quick, 26))
+        # The essentials only; the experimental output above 1080p lives on the Graphics page.
         self.row(quick, T('Resolução do jogo', 'Game resolution'), self.choice(quick, 'order_resolution', 'ini', RESOLUTIONS(), 26))
-        self.row(quick, T('Resolução de saída', 'Output resolution'), self.choice(quick, 'order_output', 'ini', OUTPUTS(), 26))
-        self.row(quick, 'Upscaler', self.choice(quick, 'order_upscaler', 'ini', UPSCALERS(), 26))
+        self.row(quick, T('Anti-aliasing', 'Anti-aliasing'), self.aa_choice(quick, 26))
         self.row(quick, T('Limite de quadros', 'Frame limit'), self.choice(quick, 'fps_limit', 'ini', FPS_LIMITS, 26))
-        self.row(quick, T('Idioma', 'Game language'), self.choice(quick, 'game_language', 'ini', LANGUAGES, 26))
+        self.row(quick, T('Idioma do jogo', 'Game language'), self.choice(quick, 'game_language', 'ini', LANGUAGES, 26))
         self.var('game_dir', 'app').trace_add('write', lambda *_a: (self.refresh_status(), self.draw_banner()))
         self.var('order_aa', 'ini').trace_add('write', lambda *_a: self.refresh_status())
 
@@ -697,8 +696,8 @@ class Launcher:
         f = self.page('graphics', T('Imagem', 'Graphics'),
                       T('Salvo em bbport.ini; o menu do jogo (Insert) altera os mesmos valores.',
                         'Saved in bbport.ini; the in-game menu (Insert) changes the same values.'))
-        self.section(f, 'Anti-aliasing', top=4)
-        self.row(f, T('Modo', 'Mode'), self.aa_choice(f),
+        self.section(f, T('Imagem do jogo', 'Game picture'), top=4)
+        self.row(f, T('Anti-aliasing', 'Anti-aliasing'), self.aa_choice(f),
                  T('Em 1080p: DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo; DLAA '
                    'mantém a cena na resolução nativa, os outros modos renderizam a cena menor e '
                    'reconstroem (mais FPS); TAA original é o anti-aliasing do PS4. Acima de 1080p: '
@@ -711,7 +710,6 @@ class Launcher:
                    "1080p: \"The game's TAA + upscaler\" (recommended) runs the game's TAA first "
                    'and the upscaler enlarges; "By the upscaler" (experimental) lets DLSS or FSR 3.1 '
                    'do the anti-aliasing too, but parts of faces may vanish.'))
-        self.section(f, T('Resolução', 'Resolution'))
         self.row(f, T('Resolução do jogo', 'Game resolution'), self.choice(f, 'order_resolution', 'ini', RESOLUTIONS()),
                  T('Original: como no PS4, cena em 2.40:1 com faixas pretas e a iluminação correta '
                    '(recomendado). As opções 16:9 usam os patches do illusion0001 que vieram no '
@@ -719,6 +717,8 @@ class Launcher:
                    'Original: as on PS4, a 2.40:1 scene with black bars and correct lighting '
                    "(recommended). The 16:9 options use illusion0001's patches found in the dump's "
                    'executable; at 1080p their author warns of visual issues.'))
+        self.section(f, T('Saída acima de 1080p (experimental, para monitores 1440p/4K)',
+                          'Output above 1080p (experimental, for 1440p/4K monitors)'))
         output_var = self.var('order_output', 'ini')
         output_var.previous = output_var.get()
 
@@ -746,6 +746,7 @@ class Launcher:
                    '1080p. Também há um controle deslizante no menu do jogo (Insert), que vale na hora.',
                    'Sharpening applied after the upscaler (DLSS or FSR 3.1) when the output is above '
                    '1080p. The in-game menu (Insert) has a slider too, applied immediately.'))
+        self.section(f, T('Efeitos', 'Effects'))
         self.check(f, 'motion_blur', 'ini', T('Desfoque de movimento (motion blur)', 'Motion blur'),
                    T('O borrão do jogo em personagens e câmera em movimento. Também pode ser trocado '
                      'no menu do jogo (Insert), sem reiniciar.',
