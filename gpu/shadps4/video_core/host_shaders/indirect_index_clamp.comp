@@ -1,0 +1,31 @@
+// SPDX-FileCopyrightText: Copyright 2026 JulioCacko (https://github.com/JulioCacko/The-Order-1886_pc), commit 386715a1
+// SPDX-License-Identifier: GPL-2.0-or-later
+// TEST (BB_INDEX_CLAMP=1): indexed indirect draw arguments with the index count clamped to the
+// bound index buffer (vk_rasterizer.cpp, ClampIndexedIndirect). GCN fetches indices past
+// INDEX_BUFFER_SIZE as 0: degenerate primitives that draw nothing. Vulkan has no such bound, so a
+// GPU-written count of 0xFFFFFFFA kept the GPU busy for minutes. One invocation per draw record.
+#version 450
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer Source { uint src[]; };
+layout(std430, binding = 1) writeonly buffer Destination { uint dst[]; };
+
+// first: dword offset of the first record in Source; stride: record stride in dwords.
+layout(push_constant) uniform Push { uint count; uint first; uint stride; uint max_indices; } push;
+
+void main() {
+    const uint index = gl_GlobalInvocationID.x;
+    if (index >= push.count) {
+        return;
+    }
+    const uint s = push.first + index * push.stride;
+    const uint d = index * 5;
+    const uint first_index = src[s + 2];
+    const uint available = push.max_indices > first_index ? push.max_indices - first_index : 0;
+    dst[d + 0] = min(src[s + 0], available);
+    dst[d + 1] = src[s + 1];
+    dst[d + 2] = first_index;
+    dst[d + 3] = src[s + 3];
+    dst[d + 4] = src[s + 4];
+}

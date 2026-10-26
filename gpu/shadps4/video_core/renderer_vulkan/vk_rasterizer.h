@@ -304,6 +304,11 @@ private:
     void ResolveVertexBuffers(const GraphicsPipeline* pipeline, const PreparedDraw* prepared);
     void EmitVertexBuffers();
     void ResolveIndexBuffer(u32 index_offset, bool is_indirect = false);
+    /// TEST (BB_INDEX_CLAMP=1, JulioCacko/The-Order-1886_pc 386715a1 + 471969f7): copies the
+    /// indexed indirect records into clamped_args with each index count bounded by
+    /// index_bind.count; returns where the draw reads them (the source when not clamped).
+    std::pair<vk::Buffer, u64> ClampIndexedIndirect(const VideoCore::Buffer* args, u64 offset,
+                                                    u32 count, u32 stride);
     void EmitIndexBuffer();
 
     void ResetBindings(bool is_compute);
@@ -436,7 +441,12 @@ private:
         vk::Buffer handle;
         u64 offset;
         vk::IndexType type;
+        u32 count = ~0u; ///< indices an indirect draw may read (~0: unknown, no INDEX_BUFFER_SIZE)
     } index_bind{};
+    /// Indexed indirect arguments with clamped index counts (ClampIndexedIndirect), a ring.
+    std::shared_ptr<VideoCore::Buffer> clamped_args;
+    u64 clamped_args_size = 0;
+    u64 clamped_args_head = 0;
     /// The direct draw whose vertex/index buffers BindResources may resolve early.
     struct DrawInputs {
         const GraphicsPipeline* pipeline;
