@@ -37,6 +37,7 @@ class Scheduler;
 class Runtime;
 class CameraMotion;
 class SceneTargets;
+class OrderDlss;
 
 class TemporalUpscaler {
 public:
@@ -65,6 +66,22 @@ public:
 
     /// Start of a frame in the command stream (display pass).
     bool OnFrameStart();
+
+    /// TOport (The Order: 1886), BB_ORDER_OUTPUT=WxH: the game's finished 1920x800 frame
+    /// (before its UI) is upscaled to the output size with the motion and depth the resolve
+    /// prepared (OrderDlss::PrepOnly); the UI and the display pass are then drawn at that size.
+    [[nodiscard]] bool OrderMode() const noexcept {
+        return order_mode;
+    }
+    /// The Order: the UI drawn after the upscale, into the output-size image.
+    [[nodiscard]] bool OrderUiPhase() const noexcept {
+        return order_mode && ui_phase;
+    }
+    void SetOrderSource(const OrderDlss* source) noexcept {
+        order_source = source;
+    }
+    /// The Order: a draw of the 3D scene (its multisampled scene-size depth), jittered.
+    [[nodiscard]] static bool OrderSceneDepth(const VideoCore::Image& depth);
     bool RasterScaling() const;
     /// bbport: LOD bias for scene materials, log2(render / output) while a reduced scene is
     /// upscaled (0 at native size, for TAA and without an upscaler).
@@ -111,7 +128,7 @@ public:
                          vk::ImageView& view, vk::ImageLayout& layout);
     /// Whether RedirectSampled would replace `image` (it may record a barrier then).
     [[nodiscard]] bool RedirectsSampled(VideoCore::ImageId image) const {
-        return display_redirect && image == ui_color;
+        return !order_mode && display_redirect && image == ui_color;
     }
 
     /// Presenter: the output-size display buffer standing in for the guest one at `address`.
@@ -141,6 +158,16 @@ private:
     void Run();
     void RunScaled();
     void RunUiOnly(VideoCore::ImageId color, VideoCore::ImageId depth);
+    /// The Order: upscales `color` (temporal when inputs are ready, else a linear copy) and
+    /// starts the output-size UI phase.
+    void OrderUpscale(VideoCore::ImageId color, VideoCore::ImageId depth);
+    /// The temporal upscale of order_frame into ui_image; false when it cannot run.
+    bool RunOrder(u32 w, u32 h, u32 ow, u32 oh);
+    void EnsureOrderFrame(u32 w, u32 h);
+    /// The Order: the output size of a guest image (the display scale applied to it).
+    [[nodiscard]] std::array<u32, 2> OrderOutSize(u32 w, u32 h) const {
+        return {(w * target_width + 960) / 1920, (h * target_height + 540) / 1080};
+    }
     void EnsureUiResources(u32 width, u32 height, vk::Format color, vk::Format depth);
     void PrepareUiDepth(VideoCore::ImageId depth);
     /// Render size below the scaled-preset output size (the resolution patch is on).
@@ -177,7 +204,9 @@ private:
     void RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color, vk::ImageView depth);
     /// Sharpness above 1 for FSR 3/4 (their RCAS stops at 1): one more RCAS pass over the target
     /// (output_image, or the 8-bit UI image with ldr) in General layout after the upscaler.
-    void ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, bool ldr, u32 w, u32 h);
+    /// RCAS beyond the providers' own (the menu's sharpness above 1), or `amount` (0..2).
+    void ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, bool ldr, u32 w, u32 h,
+                      float amount = -1.0f);
 
     const Instance& instance;
     Scheduler& scheduler;
@@ -214,6 +243,18 @@ private:
     bool context_hdr = true;
     u32 target_width = 1920, target_height = 1080; ///< output size of scaled presets
     u64 ui_trigger_vs = 0x34e8a281;
+    bool order_mode = false;
+    bool order_jitter = false;
+    const OrderDlss* order_source = nullptr;
+    u64 order_prep_seen = 0;
+    u64 order_frames = 0;
+    bool order_logged_temporal = false;
+    /// The game's finished frame copied bit for bit into its display format (B8G8R8A8 sRGB).
+    VideoCore::UniqueImage order_frame;
+    vk::UniqueImageView order_frame_view;
+    u32 order_frame_width = 0, order_frame_height = 0;
+    /// The Order's UI vertex shader (Scaleform: subtitles, prompts, HUD, menus).
+    static constexpr u64 OrderUiVs = 0x94720a3237573b18ull;
     VideoCore::ImageId ldr_target{};
     VideoCore::ImageId ui_color{}, ui_depth{};
     bool ui_phase = false;         ///< from the upscale to the next display pass

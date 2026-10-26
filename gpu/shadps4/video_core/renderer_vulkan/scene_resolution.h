@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace Vulkan::SceneResolution {
@@ -27,6 +28,23 @@ inline Size GameSize() {
              : lines == 1080 ? Size{1920, 1080} : Size{1280, 720};
     }();
     return size;
+}
+/// TOport: BB_ORDER_OUTPUT=WxH, the display size the port upscales the finished frame to (the
+/// game keeps drawing GameSize()); 1920x1080 (no upscaling) when unset or invalid.
+inline Size OrderOutput() {
+    static const Size size = [] {
+        const char* env = std::getenv("BB_ORDER_OUTPUT");
+        unsigned w = 0, h = 0;
+        if (!env || std::sscanf(env, "%ux%u", &w, &h) != 2 || w < 1920 || h < 1080) {
+            return Size{};
+        }
+        return Size{w, h};
+    }();
+    return size;
+}
+/// The finished frame is upscaled past the game's 1920x1080 display buffer.
+inline bool OrderUpscaling() {
+    return OrderOutput() != Size{};
 }
 inline Size ForPreset(int preset, Size output = {}) {
     // Even dimensions for half-resolution effects; match the preset labels exactly.

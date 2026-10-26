@@ -215,8 +215,30 @@ void Menu() {
     const char* const aa_names[] = {L("TAA original do jogo", "The game's original TAA"), L("DLSS DLAA (resolução nativa)", "DLSS DLAA (native resolution)"),
                                            L("DLSS Qualidade", "DLSS Quality"), L("DLSS Equilibrado", "DLSS Balanced"),
                                            L("DLSS Desempenho", "DLSS Performance"), L("DLSS Ultra Desempenho", "DLSS Ultra Performance")};
-    OrderCombo("aa", "Anti-aliasing", s.order_aa, aa_values, aa_names);
-    Hint(L("DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo. Abaixo de DLAA, a cena é renderizada menor e reconstruída. Reinicie para aplicar.", "DLSS (NVIDIA RTX) replaces the game's own temporal resolve. Below DLAA the scene is rendered smaller and reconstructed. Restart to apply."));
+    if (s.order_output == 1080) {
+        OrderCombo("aa", "Anti-aliasing", s.order_aa, aa_values, aa_names);
+        Hint(L("DLSS (NVIDIA RTX) substitui a resolução temporal do próprio jogo. Abaixo de DLAA, a cena é renderizada menor e reconstruída. Reinicie para aplicar.", "DLSS (NVIDIA RTX) replaces the game's own temporal resolve. Below DLAA the scene is rendered smaller and reconstructed. Restart to apply."));
+    } else {
+        // Above 1080p the choice is only whether the game's TAA runs before the upscaler; the
+        // DLSS modes below DLAA mean the same as DLAA here (shown as "by the upscaler").
+        const char* const out_names[] = {L("TAA original + upscaler (recomendado)", "The game's TAA + upscaler (recommended)"),
+                                         L("Pelo upscaler (experimental)", "By the upscaler (experimental)")};
+        const bool game_taa = s.order_aa == BbSettings::OrderAaGame;
+        ImGui::PushID("aa_out");
+        if (ImGui::BeginCombo("Anti-aliasing", out_names[game_taa ? 0 : 1])) {
+            if (ImGui::Selectable(out_names[0], game_taa) && !game_taa) {
+                s.order_aa.store(BbSettings::OrderAaGame);
+                dirty = true;
+            }
+            if (ImGui::Selectable(out_names[1], !game_taa) && game_taa) {
+                s.order_aa.store(BbSettings::OrderAaDlaa);
+                dirty = true;
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+        Hint(L("TAA original: o TAA do jogo roda antes e o upscaler amplia. Pelo upscaler: o DLSS ou o FSR 3.1 faz também o anti-aliasing, mas partes de rostos podem sumir (2026-10-19). Reinicie para aplicar.", "The game's TAA: it runs first and the upscaler enlarges. By the upscaler: DLSS or FSR 3.1 also does the anti-aliasing, but parts of faces may vanish (2026-10-19). Restart to apply."));
+    }
     if (s.order_aa != BbSettings::OrderAaGame && s.dlss_problem.load()) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "DLSS: %s", s.dlss_problem.load());
     }
@@ -228,6 +250,42 @@ void Menu() {
     OrderCombo("res", L("Resolução do jogo", "Game resolution"), s.order_resolution, resolution_values,
                resolution_names);
     Hint(L("Original: como no PS4, cena em 2.40:1 com faixas pretas, e a iluminação correta. As opções 16:9 usam os patches do illusion0001 que vieram no executável do dump; o autor avisa que 1080p em 16:9 tem problemas visuais. Reinicie para aplicar.", "Original: as on PS4, a 2.40:1 scene with black bars and correct lighting. The 16:9 options use illusion0001's patches found in the dump's executable; their author warns that 16:9 at 1080p has visual issues. Restart to apply."));
+
+    static const int output_values[] = {1080, 1440, 2160};
+    const char* const output_names[] = {L("1080p (a resolução do jogo)", "1080p (the game's resolution)"),
+                                        L("1440p (ampliada pelo upscaler, experimental)", "1440p (upscaled, experimental)"),
+                                        L("4K (ampliada pelo upscaler, experimental)", "4K (upscaled, experimental)")};
+    const int output_before = s.order_output.load();
+    OrderCombo("output", L("Resolução de saída", "Output resolution"), s.order_output, output_values,
+               output_names);
+    if (output_before == 1080 && s.order_output != 1080) {
+        s.order_aa.store(BbSettings::OrderAaGame); // the recommended anti-aliasing above 1080p
+    }
+    if (s.order_output != 1080) {
+        // FSR 4 / 4.1.1 stay reachable through bbport.ini (order_upscaler) until tested.
+        static const int upscaler_values[] = {BbSettings::UpscalerDlss, BbSettings::UpscalerFsr3,
+                                              BbSettings::UpscalerOff};
+        const char* const upscaler_names[] = {"NVIDIA DLSS", "AMD FSR 3.1",
+                                              L("Nenhum (ampliação simples)", "None (simple scaling)")};
+        OrderCombo("upscaler", "Upscaler", s.order_upscaler, upscaler_values, upscaler_names);
+        ImGui::PushID("sharpness");
+        int sharpness = s.sharpen.load() ? int(s.sharpness.load() * 100.0f + 0.5f) : 0;
+        if (ImGui::SliderInt(L("Nitidez", "Sharpening"), &sharpness, 0, 100, "%d%%")) {
+            s.sharpness.store(float(sharpness) / 100.0f);
+            s.sharpen.store(true); // 0% is off; the launcher writes only sharpness
+            dirty = true;
+        }
+        ImGui::PopID();
+    }
+    Hint(L("EXPERIMENTAL: para monitores 1440p ou 4K. O jogo continua na própria resolução e o quadro pronto é ampliado pelo upscaler; em monitor 1080p não há ganho. Reinicie para aplicar.", "EXPERIMENTAL: for 1440p or 4K monitors. The game keeps its own resolution and the finished frame is upscaled; on a 1080p monitor there is no gain. Restart to apply."));
+    if (s.order_output != 1080) {
+        Hint(L("Nitidez: aplicada depois do upscaler (DLSS e FSR 3.1), vale na hora.", "Sharpening: applied after the upscaler (DLSS and FSR 3.1), applies immediately."));
+    }
+
+    OrderCheckbox("mblur", L("Desfoque de movimento (motion blur)", "Motion blur"), s.order_motion_blur);
+    Hint(L("O borrão do jogo em personagens e câmera em movimento. Vale na hora.", "The game's blur on moving characters and camera. Applies immediately."));
+    OrderCheckbox("dof", L("Profundidade de campo (DoF)", "Depth of field"), s.order_dof);
+    Hint(L("O desfoque do que está fora de foco (fundo, mira, cutscenes). Vale na hora.", "The blur of what is out of focus (background, aiming, cutscenes). Applies immediately."));
 
     ImGui::SeparatorText(L("Desempenho", "Performance"));
     static const unsigned fps_values[] = {30, 60, 90, 120};
@@ -312,26 +370,24 @@ void FpsCounter() {
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                      ImGuiWindowFlags_NoFocusOnAppearing);
     const auto& s = BbSettings::Get();
+    // TOport: the upscaler runs only above 1080p (the Bloodborne field keeps a stale choice).
+    const bool upscaling = s.startup_order_output != 1080;
+    const char* const upscaler = !upscaling ? ""
+                                 : s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
+                                 : s.upscaler == BbSettings::UpscalerFsr4   ? "FSR 4"
+                                 : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
+                                 : s.upscaler == BbSettings::UpscalerTaa    ? "TAA"
+                                 : s.upscaler == BbSettings::UpscalerDlss   ? "DLSS"
+                                                                            : "";
     if (const unsigned limit = s.frame_limit.load()) {
         ImGui::Text("%.0f FPS  %.1f ms  limite %u  %s",
                     frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f, frame_ms_avg, limit,
-                    s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
-                    : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
-                    : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
-                    : s.upscaler == BbSettings::UpscalerTaa ? "TAA"
-                    : s.upscaler == BbSettings::UpscalerDlss ? "DLSS selecionado"
-                                                             : "");
+                    upscaler);
         ImGui::End();
         return;
     }
     ImGui::Text("%.0f FPS  %.1f ms  %s", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
-                frame_ms_avg,
-                s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
-                : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
-                : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
-                : s.upscaler == BbSettings::UpscalerTaa ? "TAA"
-                : s.upscaler == BbSettings::UpscalerDlss ? "DLSS"
-                                                         : "");
+                frame_ms_avg, upscaler);
     ImGui::End();
 }
 

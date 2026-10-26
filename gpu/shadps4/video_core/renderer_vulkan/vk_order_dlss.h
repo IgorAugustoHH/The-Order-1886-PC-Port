@@ -18,6 +18,7 @@
 #include "common/types.h"
 #include "video_core/renderer_vulkan/scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/types.h"
 
@@ -61,6 +62,25 @@ public:
     /// game's dispatch must be skipped.
     bool Replace(std::span<const VideoCore::ImageId> images, std::span<const u32> flatbuf);
 
+    /// TOport (BB_ORDER_OUTPUT): the resolve prepares the output upscaler's inputs only.
+    [[nodiscard]] bool PrepOnly() const noexcept {
+        return enabled && prep_only;
+    }
+    /// Resolves that prepared motion and depth (one per frame with a 3D scene).
+    [[nodiscard]] u64 PrepFrames() const noexcept {
+        return prep_frames;
+    }
+    /// The prepared images, in General layout at the scene size: motion in pixels, previous -
+    /// current (RG16F), and depth sample 0 (R32F).
+    [[nodiscard]] Dlss::Resource Motion() const {
+        return {vk::Image(motion_image), *motion_view, vk::Format::eR16G16Sfloat,
+                vk::ImageAspectFlagBits::eColor, width, height};
+    }
+    [[nodiscard]] Dlss::Resource Depth() const {
+        return {vk::Image(depth_image), *depth_view, vk::Format::eR32Sfloat,
+                vk::ImageAspectFlagBits::eColor, width, height};
+    }
+
 private:
     bool EnsureResources(u32 width, u32 height, u32 out_width, u32 out_height);
     vk::ImageView TempView(const VideoCore::Image& image, vk::Format format,
@@ -76,6 +96,8 @@ private:
     bool failed = false;
     bool depth_invert = false;
     bool scaled = false;
+    bool prep_only = false, game_taa = false;
+    u64 prep_frames = 0;
     bool size_set = false;
     bool scene_open = false;
     SceneResolution::Size scene_size{};

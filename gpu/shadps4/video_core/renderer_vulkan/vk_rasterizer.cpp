@@ -10,6 +10,7 @@
 #include <thread>
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
+#include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "video_core/renderer_vulkan/dof_capture.h"
@@ -250,6 +251,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
                                                   *camera_motion, *scene_targets);
     order_dlss = std::make_unique<OrderDlss>(instance, scheduler, texture_cache, runtime,
                                               *scene_targets);
+    upscaler->SetOrderSource(order_dlss.get());
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
@@ -1251,6 +1253,72 @@ static bool SkippedSunShadowDraw(const GraphicsPipeline* pipeline, const AmdGpu:
            regs.depth_buffer.Pitch() == 1024 && (!fs || fs->mrt_mask == 0);
 }
 
+// TOport: The Order: 1886's motion blur is one full-screen pass (PS 0x574764e2) writing the scene
+// from the resolve's output, the velocity and its tile maxima (passes #63-#68); the depth of
+// field ends in one (PS 0x4bb962d1) writing the post target from the scene and its half-size
+// layers (#70-#76). Switched off in the menu, the pass's full-size input of its own format is
+// copied to its target instead of drawing it.
+bool Rasterizer::SkipOrderPostPass(const GraphicsPipeline* pipeline) {
+    constexpr u64 MotionBlurPs = 0x574764e2ull;
+    constexpr u64 DofPs = 0x4bb962d1ull;
+    const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    if (!ps || !cb_descs[0].first) {
+        return false;
+    }
+    const auto& settings = BbSettings::Get();
+    u32 pass = 0;
+    if (ps->pgm_hash == MotionBlurPs && !settings.order_motion_blur.load(std::memory_order_relaxed)) {
+        pass = 1;
+    } else if (ps->pgm_hash == DofPs && !settings.order_dof.load(std::memory_order_relaxed)) {
+        pass = 2;
+    } else {
+        return false;
+    }
+    const char* const name = pass == 1 ? "motion blur" : "depth of field";
+    const VideoCore::ImageId target_id = cb_descs[0].first;
+    auto& target = texture_cache.GetImage(target_id);
+    VideoCore::ImageId source_id{};
+    for (const auto id : bound_images) {
+        const auto& image = texture_cache.GetImage(id);
+        if (id != target_id && image.info.pixel_format == target.info.pixel_format &&
+            image.info.num_samples == 1 && image.info.size.width == target.info.size.width &&
+            image.info.size.height == target.info.size.height) {
+            source_id = id;
+        }
+    }
+    static bool logged[3] = {};
+    if (!source_id) {
+        if (!logged[pass]) {
+            logged[pass] = true;
+            std::printf("TOport: %s pass kept (no source image recognized)\n", name);
+            std::fflush(stdout);
+        }
+        return false;
+    }
+    if (!logged[pass]) {
+        logged[pass] = true;
+        std::printf("TOport: %s off (its input copied, %ux%u)\n", name,
+                    target.info.size.width, target.info.size.height);
+        std::fflush(stdout);
+    }
+    auto& source = texture_cache.GetImage(source_id);
+    scheduler.EndRendering();
+    runtime.Transit(&source, vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+    runtime.Transit(&target, vk::ImageLayout::eTransferDstOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+    runtime.FlushBarriers();
+    const vk::ImageCopy region{
+        .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .extent = {target.info.size.width, target.info.size.height, 1},
+    };
+    scheduler.CommandBuffer().copyImage(
+        vk::Image(source.backing->image), vk::ImageLayout::eTransferSrcOptimal,
+        vk::Image(target.backing->image), vk::ImageLayout::eTransferDstOptimal, region);
+    return true;
+}
+
 void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
                             bool is_indexed, u32 index_offset) {
     if (SkippedShader(pipeline, &Regs()) || SkippedSunShadowDraw(pipeline, Regs())) {
@@ -1277,6 +1345,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         static const char* scene_debug = std::getenv("BB_SCENE_DEBUG");
         scene_debug_frame = scene_debug && std::remove(scene_debug) == 0;
         scene_targets->debug = scene_debug_frame;
+    } else if (upscaler->OrderMode() && regs.color_buffers[0] &&
+               FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
+        // TOport: the display pass of The Order's upscaled output (no camera motion there).
+        upscaler->OnFrameStart();
     }
     bind_prepared = used_prepared;
     motion_draw = pipeline->GetGraphicsKey().motion_vectors;
@@ -1298,6 +1370,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const bool inputs_resolved = draw_inputs.resolved;
     draw_inputs.pending = false;
     if (!bound) {
+        return;
+    }
+    if (SkipOrderPostPass(pipeline)) {
         return;
     }
     const auto state = BeginRendering(pipeline);
@@ -1408,7 +1483,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     // bbport: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
     // full-screen quad leaves an edge column unwritten).
     draw_jitter = {};
-    if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
+    if (upscaler->Enabled() && db_desc.first &&
+        (db_desc.first == camera_motion->Depth() ||
+         (upscaler->OrderMode() &&
+          TemporalUpscaler::OrderSceneDepth(texture_cache.GetImage(db_desc.first)))) &&
         (regs.num_indices > 6 || regs.num_instances.NumInstances() > 1)) {
         draw_jitter = upscaler->Jitter();
     }
@@ -1589,7 +1667,10 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     push_data.yoffset *= target_scale[1];
     pipeline->BindResources(set_writes, push_data);
     draw_jitter = {};
-    if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth()) {
+    if (upscaler->Enabled() && db_desc.first &&
+        (db_desc.first == camera_motion->Depth() ||
+         (upscaler->OrderMode() &&
+          TemporalUpscaler::OrderSceneDepth(texture_cache.GetImage(db_desc.first))))) {
         draw_jitter = upscaler->Jitter();
     }
     UpdateDynamicState(pipeline, is_indexed);
@@ -3232,6 +3313,17 @@ void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* pr
         const auto& sampler = stage.samplers[sampler_index];
         auto ssharp =
             prepared ? prepared->sampler_sharps[sampler_index] : sampler.GetSharp(stage);
+        // TOport: The Order's UI drawn scaled into the upscaled output (1440p: 1.33x): its
+        // point-sampled sprites (button icons) repeated uneven texel rows; bilinear keeps them
+        // smooth. 1:1 offscreen UI passes sample texel centres, unchanged either way.
+        if (upscaler->OrderUiPhase() && !sampler.is_depth) {
+            if (ssharp.xy_mag_filter == AmdGpu::Filter::Point) {
+                ssharp.xy_mag_filter.Assign(AmdGpu::Filter::Bilinear);
+            }
+            if (ssharp.xy_min_filter == AmdGpu::Filter::Point) {
+                ssharp.xy_min_filter.Assign(AmdGpu::Filter::Bilinear);
+            }
+        }
         const auto vk_sampler = texture_cache.GetSampler(
             ssharp, Regs().ta_bc_base, sampler.is_depth, sampler.is_depth ? 0.0f : sampler_lod_bias);
         image_infos.emplace_back(vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
