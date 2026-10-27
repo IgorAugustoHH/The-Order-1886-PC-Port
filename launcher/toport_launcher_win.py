@@ -36,7 +36,7 @@ LOG_FILE = DATA_DIR / 'last_run.log'
 ASSETS = PORT_DIR / 'launcher'
 TITLE_ID = 'CUSA00785'
 GAME_VERSION = '01.02'
-VERSION = '0.1.4'
+VERSION = '0.1.5'
 # Releases (pre-releases included): the launcher offers a newer one on its sidebar.
 RELEASES_API = 'https://api.github.com/repos/IgorAugustoHH/The-Order-1886-PC-Port/releases?per_page=5'
 RELEASES_PAGE = 'https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases'

@@ -78,8 +78,11 @@ TOPORT_DEFAULTS = {
     'BB_DEFERRED_READBACK': '1', 'BB_READBACK_MERGE': 'fixed', 'BB_COPY_GPU_BUFFERS': '0',
     'BB_DEPTH_ALIAS_FIX': '0', 'BB_TOGGLES': '16384',
     # Shaders and pipelines: compiled in the background, cached per game in user/cache.
-    'BB_ASYNC_PIPELINES': '1', 'BB_ASYNC_SHADERS': '1', 'BB_ASYNC_COMPUTE': '0',
-    'BB_GRAPHICS_SYNC': '0', 'BB_PIPELINE_CACHE': '1', 'BB_DRIVER_PIPELINE_CACHE': '0',
+    # v0.1.5: compute pipelines built off the GPU thread (a new lighting variant skips its
+    # dispatch for the few frames it compiles instead of stalling 60-100 ms), and the driver's
+    # pipeline cache kept between sessions (variants then load in milliseconds).
+    'BB_ASYNC_PIPELINES': '1', 'BB_ASYNC_SHADERS': '1', 'BB_ASYNC_COMPUTE': '1',
+    'BB_GRAPHICS_SYNC': '0', 'BB_PIPELINE_CACHE': '1', 'BB_DRIVER_PIPELINE_CACHE': '1',
     'BB_COMPILE_THREADS': '2', 'BB_COMPILE_FAIR_QUEUE': '0', 'BB_COMPILE_AGGRESSIVE': '0',
     'BB_PRELOAD_BUDGET_MS': '0',
     # Recording and presentation.

@@ -111,6 +111,37 @@ struct BufferResource {
 };
 using BufferResourceList = boost::container::static_vector<BufferResource, NUM_BUFFERS>;
 
+/// TOport (on by default; BB_LIGHT_GUARD=0 turns it off): The Order's point sprite lighting (0x804aeead, 16 unrolled lights)
+/// reads light i's first image (T# at flat words 68+8i) only when i < count (flat[657]) and its
+/// second image (196+8i) only when, in addition, bit i of flat[655] is set (shadPS4 #5218, guard
+/// tables by artemkaVG; measured on TOport: 56 dispatches, all 204 read images valid). The others
+/// hold stale T#s that made endless permutations; they read as Null, so nothing read changes.
+/// Set by vk_rasterizer.cpp when the library loads, before any shader is specialized.
+inline bool g_light_guard = true;
+
+/// True when this image of the point sprite lighting is not read by the dispatch.
+template <typename InfoT>
+bool LightImageUnread(const InfoT& info, u32 sharp_offset) {
+    if (!g_light_guard || info.pgm_hash != 0x804aeead) {
+        return false;
+    }
+    const auto flat = info.FlatUserData();
+    if (flat.size() != 708) {
+        return false; // not the layout that was measured: leave everything live
+    }
+    const u32 count = flat[657];
+    const u32 mask = flat[655];
+    if (sharp_offset >= 68 && sharp_offset < 196 && (sharp_offset - 68) % 8 == 0) {
+        const u32 light = (sharp_offset - 68) / 8;
+        return light >= count;
+    }
+    if (sharp_offset >= 196 && sharp_offset < 324 && (sharp_offset - 196) % 8 == 0) {
+        const u32 light = (sharp_offset - 196) / 8;
+        return light >= count || ((mask >> light) & 1) == 0;
+    }
+    return false;
+}
+
 enum class MipStorageFallbackMode : u16 {
     None,
     DynamicIndex,
@@ -134,6 +165,9 @@ struct ImageResource {
     constexpr AmdGpu::Image GetSharp(const auto& info) const noexcept {
         AmdGpu::Image image{};
         if (!Fetch(info.FlatUserData().data(), &image)) {
+            return AmdGpu::Image::Null(is_depth);
+        }
+        if (LightImageUnread(info, sharp_fetch.offsets[0])) {
             return AmdGpu::Image::Null(is_depth);
         }
         if (post_op == SharpFetchPostOp::ConvertCubeTo2DArray) {

@@ -229,6 +229,16 @@ static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
     return push_data;
 }
 
+// TOport: the light guard of the point sprite lighting (resource.h, LightImageUnread), read when
+// the library loads, before any shader is specialized. On unless BB_LIGHT_GUARD=0.
+static const bool light_guard_read = [] {
+    const char* env = std::getenv("BB_LIGHT_GUARD");
+    Shader::g_light_guard = !(env && env[0] == '0');
+    std::printf("Light guard: %s (BB_LIGHT_GUARD=0 turns it off)\n",
+                Shader::g_light_guard ? "on" : "off");
+    return true;
+}();
+
 Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime& runtime_,
                        AmdGpu::Liverpool* liverpool_)
     : instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, page_manager{this},
@@ -2988,6 +2998,35 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     const bool sample_proxies = !BbToggle::Disabled(BbToggle::SampleSceneProxies) &&
                                 !on_helper && scene_targets->Reduced();
 
+    // DIAGNOSTIC (BB_LIGHT_DIAG=1): point sprite lighting 0x804aeead, which light reads which
+    // image. Per dispatch (the first 40, then every 500th): flat user data words 650..660 (the
+    // light count and mask candidates, flat[657]/flat[655] in shadPS4 #5218) and, per image, the
+    // flat word of its T#, its type and whether its address is set. Logs only.
+    static const bool light_diag = [] {
+        const char* env = std::getenv("BB_LIGHT_DIAG");
+        return env && env[0] == '1';
+    }();
+    if (light_diag && stage.pgm_hash == 0x804aeead) {
+        static u32 dispatches = 0;
+        const u32 n = dispatches++;
+        if (n < 40 || n % 500 == 0) {
+            const auto flat = stage.FlatUserData();
+            std::string text = fmt::format("LightDiag #{} flat_words {} [650..660]", n, flat.size());
+            for (u32 w = 650; w <= 660; ++w) {
+                text += w < flat.size() ? fmt::format(" {}={:#x}", w, flat[w]) : std::string{};
+            }
+            text += " images:";
+            for (u32 i = 0; i < stage.images.size(); ++i) {
+                const auto& desc = stage.images[i];
+                AmdGpu::Image raw{};
+                const bool ok = desc.Fetch(flat.data(), &raw);
+                text += fmt::format(" {}@{}:{}{}", i, desc.sharp_fetch.offsets[0],
+                                    ok ? u32(raw.GetType()) : 99u,
+                                    ok && raw.Address() ? "" : "-");
+            }
+            std::printf("%s\n", text.c_str());
+        }
+    }
     for (u32 image_index = 0; image_index < stage.images.size(); ++image_index) {
         const auto& image_desc = stage.images[image_index];
         const auto tsharp =

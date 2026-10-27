@@ -534,6 +534,17 @@ void PipelineCache::WarmUp() {
             if (result) {
                 ++num_pipelines;
             }
+            // TOport: progress every 2 s, so a long preload is visible in the log (and in the
+            // test console that follows it) instead of looking like a hang.
+            static auto last_report = preload_begin;
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_report >= std::chrono::seconds(2)) {
+                last_report = now;
+                std::printf("Startup preload progress: %u built, %u scanned, %.0f s\n",
+                            num_pipelines, num_total_pipelines,
+                            std::chrono::duration<double>(now - preload_begin).count());
+                std::fflush(stdout);
+            }
         });
 
     std::fprintf(stderr, "Startup preload: built=%u scanned=%u budget_deferred=%u budget_ms=%ld elapsed_ms=%.1f\n",

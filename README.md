@@ -9,7 +9,7 @@ O jogo roda direto no processador do PC, sem emulação de CPU. Só o que muda e
 as funções do sistema da Sony e a GPU, cujos comandos e shaders viram Vulkan. Sem janela de emulador,
 sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR.
 
-**Versão atual: [v0.1.4](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/tag/v0.1.4) (pré-lançamento)** ·
+**Versão atual: [v0.1.5](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/tag/v0.1.5) (pré-lançamento)** ·
 **[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)**
 
 ![Londres vista do telhado, rodando nativo no PC](docs/screenshots/londres-telhado.jpg)
