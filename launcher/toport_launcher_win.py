@@ -35,8 +35,11 @@ LAUNCHER_FILE = DATA_DIR / 'toport.json'
 LOG_FILE = DATA_DIR / 'last_run.log'
 ASSETS = PORT_DIR / 'launcher'
 TITLE_ID = 'CUSA00785'
+# Other releases of 01.02 (CUSA00076 is the European one): the same executable code, as the
+# GoldHEN patches use one set of addresses for all of them; accepted as experimental.
+EXPERIMENTAL_IDS = ('CUSA00035', 'CUSA00070', 'CUSA00076', 'CUSA00100', 'CUSA00670')
 GAME_VERSION = '01.02'
-VERSION = '0.1.5'
+VERSION = '0.1.6'
 # Releases (pre-releases included): the launcher offers a newer one on its sidebar.
 RELEASES_API = 'https://api.github.com/repos/IgorAugustoHH/The-Order-1886-PC-Port/releases?per_page=5'
 RELEASES_PAGE = 'https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases'
@@ -142,6 +145,11 @@ def RESOLUTIONS():
             ('720', T('1280 x 720 tela cheia (16:9)', '1280 x 720 full screen (16:9)'))]
 
 
+def ASPECTS():
+    return [('ps4', T('Original do PS4 (2.40:1, faixas pretas)', 'PS4 original (2.40:1, black bars)')),
+            ('ultrawide', T('Ultrawide 21:9 (experimental)', 'Ultrawide 21:9 (experimental)'))]
+
+
 def OUTPUTS():
     return [('1080', T('1080p (a resolução do jogo)', "1080p (the game's resolution)")),
             ('1440', T('1440p (ampliada pelo upscaler, experimental)', '1440p (upscaled, experimental)')),
@@ -172,7 +180,7 @@ LANGUAGES = [('17', 'Português (Brasil)'), ('7', 'Português (Portugal)'), ('1'
 def DISPLAY_MODES():
     return [('1', T('Tela cheia sem bordas', 'Borderless full screen')),
             ('2', T('Tela cheia exclusiva', 'Exclusive full screen')), ('0', T('Janela', 'Window'))]
-INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'fps_limit': '60',
+INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'order_aspect': 'ps4', 'fps_limit': '60',
                 'game_language': '17', 'photo_camera': '1', 'motion_blur': '1', 'dof': '1', 'fast_loading': '1', 'show_fps': '1',
                 'preload_shaders': '1', 'order_output': '1080', 'order_upscaler': 'dlss',
                 'sharpness': '0.30'}
@@ -192,6 +200,8 @@ def read_ini():
         pass
     if values.get('order_resolution') not in ('retail', '720', '1080'):
         values['order_resolution'] = 'retail'  # 1440p/4K tests left out of the launcher
+    if values.get('order_aspect') not in ('ps4', 'ultrawide'):
+        values['order_aspect'] = 'ps4'
     if values.get('order_output') not in ('1080', '1440', '2160'):
         values['order_output'] = '1080'
     if values.get('order_upscaler') not in ('dlss', 'fsr3', 'fsr4', 'fsr411', 'off'):
@@ -262,7 +272,7 @@ def check_game(folder):
     except (OSError, ValueError) as error:
         return False, T(f'Não foi possível ler sce_sys/param.sfo ({error}).', f'Could not read sce_sys/param.sfo ({error}).')
     title, version = sfo.get('TITLE_ID'), sfo.get('APP_VER')
-    if title != TITLE_ID:
+    if title != TITLE_ID and title not in EXPERIMENTAL_IDS:
         return False, T(f'Este dump é {title}; o TOport roda The Order: 1886 ({TITLE_ID}).',
                         f'This dump is {title}; TOport runs The Order: 1886 ({TITLE_ID}).')
     if version != GAME_VERSION:
@@ -270,15 +280,20 @@ def check_game(folder):
                         '(as correções do executável recusam outras versões).',
                         f'Version {version}: TOport is verified on {GAME_VERSION} '
                         '(the executable fixes refuse other versions).')
+    if title != TITLE_ID:
+        return True, T(f'The Order: 1886 · {title} · versão {version} · EXPERIMENTAL: só a {TITLE_ID} foi '
+                       'testada; se algo falhar, abra uma issue com o last_run.log',
+                       f'The Order: 1886 · {title} · version {version} · EXPERIMENTAL: only {TITLE_ID} was '
+                       'tested; if anything fails, open an issue with last_run.log')
     return True, T(f'The Order: 1886 · {TITLE_ID} · versão {version}', f'The Order: 1886 · {TITLE_ID} · version {version}')
 
 
 def game_environment(launcher):
     env = dict(os.environ)
-    env['BB_GAME_DIR'] = launcher['game_dir']
+    env.setdefault('BB_GAME_DIR', launcher['game_dir'])  # a test .bat may point elsewhere
     env['BB_DATA_DIR'] = str(DATA_DIR)
     env['BB_CONFIG'] = str(CONFIG)
-    env['BB_FULLSCREEN'] = launcher.get('display', '1')
+    env.setdefault('BB_FULLSCREEN', launcher.get('display', '1'))
     return env
 
 
@@ -727,6 +742,13 @@ class Launcher:
                    'Original: as on PS4, a 2.40:1 scene with black bars and correct lighting '
                    "(recommended). The 16:9 options use illusion0001's patches found in the dump's "
                    'executable; at 1080p their author warns of visual issues.'))
+        self.row(f, T('Proporção da tela', 'Screen aspect'), self.choice(f, 'order_aspect', 'ini', ASPECTS()),
+                 T('Para monitores ultrawide: a câmera do jogo segue a proporção do monitor (até 2.40:1) '
+                   'e as faixas pretas somem. Só com a resolução Original do PS4 e em tela cheia. '
+                   'Experimental: em 16:9 não muda nada.',
+                   "For ultrawide monitors: the game's camera follows the monitor's aspect (up to "
+                   '2.40:1) and the black bars go away. Only with the PS4 original resolution and in '
+                   'full screen. Experimental: nothing changes on 16:9.'))
         self.section(f, T('Saída acima de 1080p (experimental, para monitores 1440p/4K)',
                           'Output above 1080p (experimental, for 1440p/4K monitors)'))
         output_var = self.var('order_output', 'ini')
@@ -910,7 +932,7 @@ class Launcher:
     def refresh_status(self):
         ok, message = check_game(self.var('game_dir', 'app').get())
         self.checks['game'].configure(text=('✓ ' if ok else '✗ ') + message,
-                                      foreground=TEXT if ok else '#e3b25a')
+                                      foreground=TEXT if ok and 'EXPERIMENTAL' not in message else '#e3b25a')
         saves = DATA_DIR / 'user'
         self.checks['saves'].configure(
             text=T('✓ Saves e cache de shaders em ', '✓ Saves and shader cache in ') + str(saves)

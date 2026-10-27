@@ -100,6 +100,7 @@ struct Values {
     /// TOport (The Order: 1886): applied at start by run.py, which turns them into the
     /// BB_ORDER_* / BB_LANGUAGE / pipe environment; changes need a restart (except fps_limit).
     std::atomic<int> order_aa{OrderAaQuality};   ///< OrderAa: game TAA, DLAA, DLSS modes
+    std::atomic<bool> order_ultrawide{false};    ///< TOport: order_aspect=ultrawide (run.py)
     std::atomic<int> order_resolution{800};      ///< 800 retail (2.40:1), 1080 or 720 16:9
     std::atomic<int> game_language{17};          ///< PS4 system language code (17 pt-BR)
     std::atomic<bool> photo_camera{true};        ///< free photo camera in cutscenes

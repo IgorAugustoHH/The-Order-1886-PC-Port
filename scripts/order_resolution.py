@@ -110,6 +110,14 @@ def block_writes(elf, mode, shift):
         start = elf_offset(elf, target + shift, len(original))
         if elf[start:start + 6] != original[:6]:
             raise ValueError(f'Resolucao: proporcao original diverge em {target:#x}')
+        custom = os.environ.get('BB_ORDER_ASPECT')
+        if custom:
+            value = float(custom)
+            if not 1.78 <= value <= 2.4:
+                raise ValueError(f'BB_ORDER_ASPECT fora de 1.78..2.4: {custom}')
+            # The scene height the GPU side expects (scene_resolution.h): 1920 / aspect, even.
+            aspect = 1920.0 / (round(1920.0 / value / 2.0) * 2)
+            print(f'The Order: camera {aspect:.4f}:1 (BB_ORDER_ASPECT, EXPERIMENTAL)')
         out.append((target + 6, struct.pack('<f', aspect)))
         for target, original, value in RETAIL_SIZE:
             start = elf_offset(elf, target + shift, len(original))

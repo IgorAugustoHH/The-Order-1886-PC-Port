@@ -12,6 +12,9 @@ from pathlib import Path
 
 ELF_SHA256 = '528b8d0e1d185790faf4edba702119e64a98bbceb2a7c0fd66d031b0ac27fbe3'
 TITLE_ID = 'CUSA00785'
+# The same 01.02 code in every region (illusion0001's GoldHEN patches use one set of addresses
+# for all of them); the original-instruction check below still decides.
+TITLE_IDS = {'CUSA00035', 'CUSA00070', 'CUSA00076', 'CUSA00100', 'CUSA00670', TITLE_ID}
 APP_VERSION = '01.02'
 CONTROL_GATE = 0x2f7ef7
 PATCH_OFFSET = 0x2f7eff
@@ -21,8 +24,8 @@ REPLACEMENT = b'\x90' * 6
 
 def camera_writes(elf, metadata):
     """Fail closed on another title, image or branch; return one image-relative write."""
-    if metadata.get('TITLE_ID') != TITLE_ID or metadata.get('APP_VER') != APP_VERSION:
-        raise ValueError('Modo foto: candidato exclusivo de CUSA00785 01.02')
+    if metadata.get('TITLE_ID') not in TITLE_IDS or metadata.get('APP_VER') != APP_VERSION:
+        raise ValueError('Modo foto: candidato exclusivo de The Order: 1886 01.02')
     if hashlib.sha256(elf).hexdigest() != ELF_SHA256:
         # Another dump of 01.02 can differ outside the gate: the byte check below decides.
         print('Modo foto: eboot com hash diferente; conferindo a instrucao original')

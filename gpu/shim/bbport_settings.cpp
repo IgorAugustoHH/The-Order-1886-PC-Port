@@ -76,6 +76,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
                            : value == "fsr411" ? UpscalerFsr411
                            : value == "off"    ? UpscalerOff
                                                : UpscalerDlss;
+    } else if (key == "order_aspect") {
+        v.order_ultrawide = value == "ultrawide";
     } else if (key == "order_resolution") {
         v.order_resolution = value == "retail" ? 800 : i == 720 ? 720 : 1080;
     } else if (key == "game_language") {
@@ -278,6 +280,7 @@ void Save() {
                  int(v.photo_camera.load()), int(v.fast_loading.load()), v.fps_limit.load(),
                  int(v.preload_shaders.load()), v.ui_english.load() ? "en" : "pt");
     const int upscaler = v.order_upscaler.load();
+    std::fprintf(file, "order_aspect=%s\n", v.order_ultrawide.load() ? "ultrawide" : "ps4");
     std::fprintf(file, "motion_blur=%d\ndof=%d\n", int(v.order_motion_blur.load()),
                  int(v.order_dof.load()));
     std::fprintf(file, "order_output=%d\norder_upscaler=%s\n", v.order_output.load(),

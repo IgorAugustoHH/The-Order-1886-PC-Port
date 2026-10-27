@@ -108,6 +108,7 @@ output_res=1920x1080
 live_resolution=0
 order_aa=quality
 order_resolution=retail
+order_aspect=ps4
 game_language=17
 photo_camera=1
 motion_blur=1
@@ -161,6 +162,13 @@ def toport_environment(env, config):
         env.setdefault('BB_ORDER_RESOLUTION', resolution)
     if resolution == '2160':
         env.setdefault('BB_GAME_ARGS', '-use4K')
+    # Ultrawide (experimental): the PS4 camera at the monitor's aspect (up to its own 2.40:1)
+    # and the game's black bars cropped, so the picture fills a 21:9 screen.
+    if resolution == 'retail' and setting('order_aspect', 'ps4') == 'ultrawide':
+        aspect = monitor_aspect()
+        if aspect > 1.8:
+            env.setdefault('BB_ORDER_ULTRAWIDE', '1')
+            env.setdefault('BB_ORDER_ASPECT', f'{min(aspect, 2.4):.4f}')
     # Output above the game's 1080p: the finished frame is upscaled to it (the game keeps its
     # own resolution); the anti-aliasing mode then picks whether the game's TAA stays.
     output = {'1440': '2560x1440', '2160': '3840x2160'}.get(setting('order_output', '1080'))
@@ -181,6 +189,21 @@ def toport_environment(env, config):
     # Pipelines of the last two sessions built before the game starts (fewer first-use stalls).
     env.setdefault('BB_PRELOAD_PIPELINES', setting('preload_shaders', '1'))
     env['BB_TOPORT_KEYS'] = ','.join(sorted(set(env) - before))
+
+
+def monitor_aspect():
+    """Width / height of the primary monitor in pixels (the fullscreen window's size)."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        try:
+            user32.SetProcessDPIAware()
+        except AttributeError:
+            pass
+        width, height = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+        return width / height if height else 0.0
+    except (AttributeError, OSError):
+        return 0.0
 
 
 def find_executable(name):

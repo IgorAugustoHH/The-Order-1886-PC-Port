@@ -42,14 +42,31 @@ extern "C" int bbgpu_mouse_take(float* dx, float* dy, uint32_t* buttons) {
 namespace Frontend {
 
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
+    // TOport test: BB_WINDOW_SIZE=WxH opens the window at that size (e.g. a 21:9 window).
+    if (const char* size = std::getenv("BB_WINDOW_SIZE")) {
+        s32 w = 0, h = 0;
+        if (std::sscanf(size, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+            width_ = w;
+            height_ = h;
+        }
+    }
     // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         UNREACHABLE_MSG("Failed to initialize SDL video: {}", SDL_GetError());
     }
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
+    // TOport test: BB_WINDOW_POS=X,Y places it on the desktop (e.g. a 21:9 window across two
+    // monitors) and BB_WINDOW_BORDERLESS=1 drops the title bar.
+    s32 pos_x = SDL_WINDOWPOS_CENTERED, pos_y = SDL_WINDOWPOS_CENTERED;
+    if (const char* pos = std::getenv("BB_WINDOW_POS")) {
+        std::sscanf(pos, "%d,%d", &pos_x, &pos_y);
+    }
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, pos_x);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, pos_y);
+    if (const char* borderless = std::getenv("BB_WINDOW_BORDERLESS"); borderless && borderless[0] == '1') {
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true);
+    }
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);

@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/scene_resolution.h"
 #include "video_core/texture_cache/image.h"
 
 #include <algorithm>
@@ -758,6 +759,48 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
                                vk::DependencyFlagBits::eByRegion, clear_done, {}, {});
         auto blit = MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height);
+        // TOport (experimental, BB_ORDER_ULTRAWIDE=1): on a display wider than the frame, the
+        // game's own black bars are cropped: only the band the camera draws (the scene height,
+        // 800 lines at the PS4's 2.40:1, or the BB_ORDER_ASPECT band) is fitted to the screen.
+        static const bool ultrawide = [] {
+            const char* env = std::getenv("BB_ORDER_ULTRAWIDE");
+            const bool on = env && env[0] == '1';
+            std::printf("Ultrawide crop: %s\n", on ? "on (experimental)" : "off");
+            return on;
+        }();
+        const float frame_aspect = float(frame->width) / float(frame->height);
+        const float screen_aspect = float(extent.width) / float(extent.height);
+        // The band is a share of the 1080-line game size; frames of other sizes (videos,
+        // the title screen) get the same share of their own height.
+        const u32 band_1080 = SceneResolution::GameSize().height;
+        const s32 band = s32(frame->height * band_1080 / 1080);
+        if (ultrawide && screen_aspect > frame_aspect + 0.01f && band_1080 < 1080 &&
+            std::abs(frame_aspect - 16.0f / 9.0f) < 0.02f) {
+            const s32 y0 = (s32(frame->height) - band) / 2;
+            blit = MakeImageBlitFit(frame->width, band, extent.width, extent.height);
+            blit.srcOffsets[0].y = y0;
+            blit.srcOffsets[1].y = y0 + band;
+            // A gap of a line or two (the band rounds to whole lines): fill the screen, the
+            // aspect changes by well under 1%.
+            if (s32(extent.width) - (blit.dstOffsets[1].x - blit.dstOffsets[0].x) <= 2 &&
+                s32(extent.height) - (blit.dstOffsets[1].y - blit.dstOffsets[0].y) <= 2) {
+                blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+                blit.dstOffsets[1] = vk::Offset3D{s32(extent.width), s32(extent.height), 1};
+            }
+            static u32 logged_height = 0;
+            if (logged_height != frame->height) {
+                logged_height = frame->height;
+                std::printf("Ultrawide crop: screen %ux%u, frame %ux%u, band %d lines at y %d\n",
+                            extent.width, extent.height, frame->width, frame->height, band, y0);
+            }
+        } else if (ultrawide) {
+            static u32 skipped_height = 0;
+            if (skipped_height != frame->height) {
+                skipped_height = frame->height;
+                std::printf("Ultrawide crop: frame %ux%u left as is (screen %ux%u)\n",
+                            frame->width, frame->height, extent.width, extent.height);
+            }
+        }
         cmdbuf.blitImage(frame->image, vk::ImageLayout::eTransferSrcOptimal, swapchain_image,
                          vk::ImageLayout::eTransferDstOptimal, blit, vk::Filter::eLinear);
         // bbport: the settings menu / FPS counter over the frame, at display resolution.

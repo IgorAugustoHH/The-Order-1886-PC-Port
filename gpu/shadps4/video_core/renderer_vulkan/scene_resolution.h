@@ -22,6 +22,14 @@ inline Size GameSize() {
         // retail: the 2.40:1 camera draws the scene into 1920x800 targets (the bars are outside
         // them); the reduced scene and DLSS work at that size.
         if (env && env[0] == 'r') {
+            // TOport (experimental): BB_ORDER_ASPECT changes the camera (e.g. 21:9); the band
+            // is 1920 / aspect lines, even.
+            if (const char* aspect = std::getenv("BB_ORDER_ASPECT")) {
+                const double value = std::atof(aspect);
+                if (value >= 1.78 && value <= 2.4) {
+                    return Size{1920, uint32_t(std::lround(1920.0 / value / 2.0)) * 2};
+                }
+            }
             return Size{1920, 800};
         }
         return lines == 2160 ? Size{3840, 2160}
