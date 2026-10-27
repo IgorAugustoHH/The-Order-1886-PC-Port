@@ -27,10 +27,6 @@ RTX 5090 at ~50% load.*
 | ![Galahad e Isabeau / Galahad and Isabeau](docs/screenshots/rtx5090/cutscene-galahad-isabeau.jpg) | ![Tiroteio nas ruas de Londres / Firefight on the streets of London](docs/screenshots/rtx5090/tiroteio-rua.jpg) |
 | ![Cutscene em 4K / Cutscene at 4K](docs/screenshots/rtx5090/cutscene-perceval.jpg) | ![O salão da Bolsa / The Exchange hall](docs/screenshots/rtx5090/salao-bolsa.jpg) |
 
-![Menu do TOport em 4K com DLSS / The TOport menu at 4K with DLSS](docs/screenshots/rtx5090/menu-toport-4k.jpg)
-
-*O menu do TOport (Insert) dentro do jogo: saída em 4K, NVIDIA DLSS e limite de 120 FPS. / The in-game
-TOport menu (Insert): 4K output, NVIDIA DLSS and a 120 FPS limit.*
 
 > **Nenhum arquivo do jogo vem incluído.** É preciso o seu próprio dump de **The Order: 1886**
 > (CUSA00785), de uma cópia que você possui legalmente, **com a atualização 1.02 aplicada**
