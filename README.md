@@ -10,7 +10,14 @@ as funções do sistema da Sony e a GPU, cujos comandos e shaders viram Vulkan. 
 sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR.
 
 **Versão atual: [v0.1.6](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/tag/v0.1.6) (pré-lançamento)** ·
-**[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)**
+**[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)** ·
+**⭐ Gostou? Deixe uma estrela no topo da página, isso ajuda o projeto a ser encontrado.**
+
+### ▶ 4K a 120 FPS numa RTX 5090
+[![The Order: 1886 PC Port, DLSS 4K 120FPS | RTX 5090 | R9 9950X3D](https://img.youtube.com/vi/hSzv7SaiaKk/maxresdefault.jpg)](https://www.youtube.com/watch?v=hSzv7SaiaKk)
+
+*O TOport com DLSS em 4K a 120 FPS numa RTX 5090 com Ryzen 9 9950X3D. Vídeo de
+[Bang4BuckPC Gamer](https://www.youtube.com/@Bang4BuckPCGamer).*
 
 ![Londres vista do telhado, rodando nativo no PC](docs/screenshots/londres-telhado.jpg)
 
@@ -40,7 +47,12 @@ sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR
 - Controle de PlayStation, Xbox ou **teclado e mouse** (WASD andar, mouse câmera, botão direito mirar,
   botão esquerdo atirar), que funcionam junto com o controle.
 
-## Desempenho (i5-10400F, RTX 2060 6 GB, 16 GB de RAM)
+## Desempenho
+**Topo de linha (RTX 5090, Ryzen 9 9950X3D):** 4K com DLSS a 120 FPS
+([vídeo](https://www.youtube.com/watch?v=hSzv7SaiaKk)).
+
+**Entrada (i5-10400F, RTX 2060 6 GB, 16 GB de RAM):**
+
 | Configuração | Cenas pesadas |
 |---|---|
 | Original + TAA do jogo | ~45–50 FPS |
