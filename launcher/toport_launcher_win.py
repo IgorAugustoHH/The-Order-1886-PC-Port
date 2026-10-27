@@ -40,6 +40,7 @@ VERSION = '0.1.5'
 # Releases (pre-releases included): the launcher offers a newer one on its sidebar.
 RELEASES_API = 'https://api.github.com/repos/IgorAugustoHH/The-Order-1886-PC-Port/releases?per_page=5'
 RELEASES_PAGE = 'https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases'
+PROJECT_PAGE = 'https://github.com/IgorAugustoHH/The-Order-1886-PC-Port'
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
@@ -571,6 +572,15 @@ class Launcher:
             item.bind('<Leave>', lambda _e, n=name: n != self.current_page and self.nav[n].configure(bg=BG))
             self.nav[name] = item
         tk.Frame(side, bg=BG).pack(fill='both', expand=True)
+        # A star on GitHub helps more people find the project.
+        tk.Label(side, text=T('Gostou do TOport? Deixe uma ★ no GitHub, isso ajuda mais gente a encontrar o projeto.',
+                              'Enjoying TOport? Leave a ★ on GitHub, it helps more people find the project.'),
+                 bg=BG, fg=GOLD, font=('Segoe UI', 9), justify='left', wraplength=self.px(190)).pack(
+            anchor='w', padx=22, pady=(0, 6))
+        tk.Button(side, text=T('★  GitHub do projeto', '★  Project on GitHub'), bg=CARD, fg=TEXT,
+                  activebackground=LINE, activeforeground=TEXT, relief='flat', font=('Segoe UI', 10, 'bold'),
+                  cursor='hand2', command=lambda: webbrowser.open(PROJECT_PAGE)).pack(
+            fill='x', padx=18, pady=(0, 14))
         self.side_note = tk.Label(side, text=T('No jogo: Insert\nabre o menu do TOport.\nF9 alterna o limite de quadros.', 'In game: Insert\nopens the TOport menu.\nF9 cycles the frame limit.'),
                  bg=BG, fg=MUTED, font=('Segoe UI', 9), justify='left',
                  wraplength=self.px(200))
