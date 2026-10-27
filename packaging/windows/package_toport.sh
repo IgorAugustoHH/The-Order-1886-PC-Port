@@ -38,7 +38,7 @@ dest=out/stage/TOport
 rm -rf -- out/stage
 mkdir -p "$dest/bin" "$dest/launcher"
 cp -r out/pyi-dist/TOport/. "$dest/"
-cp launcher/toport.ico launcher/toport.png launcher/toport_256.png launcher/banner.png "$dest/launcher/"
+cp launcher/toport.ico launcher/toport.png launcher/toport_256.png launcher/banner.png launcher/star_banner.jpg "$dest/launcher/"
 for exe in bb-probe.exe bb-gpu-capabilities.exe; do
     [[ -f out/$exe ]] && llvm-strip --strip-debug -o "$dest/bin/$exe" "out/$exe"
 done

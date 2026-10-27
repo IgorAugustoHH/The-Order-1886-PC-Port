@@ -367,6 +367,58 @@ class Launcher:
         root.after(100, self.drain_output)
         threading.Thread(target=self.detect_gpu, daemon=True).start()
         threading.Thread(target=self.check_update, daemon=True).start()
+        # Once per version: a request to star the project, in front of the launcher.
+        if self.app.get('star_prompt') != VERSION:
+            root.after(400, self.star_prompt)
+
+    def star_prompt(self):
+        tk = self.tk
+        self.app['star_prompt'] = VERSION
+        write_launcher(self.app)
+        top = tk.Toplevel(self.root, bg=BG, highlightthickness=2, highlightbackground=GOLD)
+        top.title(T('Apoie o TOport', 'Support TOport'))
+        top.transient(self.root)
+        top.resizable(False, False)
+        width = self.px(760)
+        try:
+            from PIL import Image, ImageTk
+            with Image.open(ASSETS / 'star_banner.jpg') as art:
+                height = int(width * art.height / art.width)
+                self.star_art = ImageTk.PhotoImage(art.resize((width, height), Image.LANCZOS))
+            tk.Label(top, image=self.star_art, bg=BG, bd=0).pack()
+        except (ImportError, OSError):
+            pass
+        tk.Label(top, text=T('⭐  O TOport precisa de você!', '⭐  TOport needs you!'), bg=BG, fg=GOLD,
+                 font=('Georgia', 22, 'bold')).pack(pady=(self.px(18), self.px(6)))
+        tk.Label(top, text=T('O TOport é gratuito e feito por fãs. Milhares de pessoas já jogam, mas poucas '
+                             'deixam uma estrela no GitHub, e é ela que faz o projeto aparecer para mais '
+                             'gente e continuar recebendo melhorias.\n\nLeva 5 segundos: clique abaixo e '
+                             'aperte  ⭐ Star  no topo da página.',
+                             'TOport is free and made by fans. Thousands of people already play it, but few '
+                             'leave a star on GitHub, and stars are what make the project show up for more '
+                             'people and keep the updates coming.\n\nIt takes 5 seconds: click below and '
+                             'press  ⭐ Star  at the top of the page.'),
+                 bg=BG, fg=TEXT, font=('Segoe UI', 12), justify='center',
+                 wraplength=width - self.px(80)).pack(padx=self.px(40))
+
+        def star():
+            webbrowser.open(PROJECT_PAGE)
+            top.destroy()
+
+        tk.Button(top, text=T('⭐  DAR UMA ESTRELA NO GITHUB', '⭐  STAR TOPORT ON GITHUB'), command=star,
+                  bg=GOLD, fg='#1a1410', activebackground='#e0c27f', activeforeground='#1a1410',
+                  relief='flat', font=('Segoe UI', 15, 'bold'), cursor='hand2',
+                  padx=self.px(24), pady=self.px(12)).pack(pady=(self.px(20), self.px(8)))
+        later = tk.Label(top, text=T('Agora não', 'Not now'), bg=BG, fg=MUTED, font=('Segoe UI', 9, 'underline'),
+                         cursor='hand2')
+        later.pack(pady=(0, self.px(16)))
+        later.bind('<Button-1>', lambda _e: top.destroy())
+        top.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - top.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - top.winfo_height()) // 2
+        top.geometry(f'+{max(x, 0)}+{max(y, 0)}')
+        top.grab_set()
+        top.focus_set()
 
     def px(self, size):
         return int(size * self.dpi)
