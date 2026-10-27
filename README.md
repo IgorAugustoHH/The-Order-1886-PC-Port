@@ -3,7 +3,10 @@
 [![Downloads](https://img.shields.io/github/downloads/IgorAugustoHH/The-Order-1886-PC-Port/total?label=downloads&color=c9a227)](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases) [![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/486-the-order-1886/)
 
 **The Order: 1886 rodando nativo no Windows 10/11: câmera cinematográfica original do PS4, NVIDIA DLSS,
-até 120 FPS, 23 idiomas e um launcher próprio.**
+até 4K a 120 FPS, ultrawide 21:9, 23 idiomas e um launcher próprio.**
+
+*The Order: 1886 running natively on Windows 10/11: the PS4's original cinematic camera, NVIDIA DLSS,
+up to 4K at 120 FPS, 21:9 ultrawide, 23 languages and its own launcher.*
 
 O jogo roda direto no processador do PC, sem emulação de CPU. Só o que muda entre PS4 e PC é traduzido:
 as funções do sistema da Sony e a GPU, cujos comandos e shaders viram Vulkan. Sem janela de emulador,
@@ -13,19 +16,22 @@ sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR
 **[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)** ·
 **⭐ Gostou? Deixe uma estrela no topo da página, isso ajuda o projeto a ser encontrado.**
 
-### ▶ 4K a 120 FPS numa RTX 5090
-[![The Order: 1886 PC Port, DLSS 4K 120FPS | RTX 5090 | R9 9950X3D](https://img.youtube.com/vi/hSzv7SaiaKk/maxresdefault.jpg)](https://www.youtube.com/watch?v=hSzv7SaiaKk)
+## 4K a 120 FPS numa RTX 5090 / 4K at 120 FPS on an RTX 5090
+[![TOport a 120 FPS numa RTX 5090 / TOport at 120 FPS on an RTX 5090](docs/screenshots/rtx5090/benchmark-telhado.jpg)](https://www.youtube.com/watch?v=hSzv7SaiaKk)
 
-*O TOport com DLSS em 4K a 120 FPS numa RTX 5090 com Ryzen 9 9950X3D. Vídeo de
-[Bang4BuckPC Gamer](https://www.youtube.com/@Bang4BuckPCGamer).*
-
-![Londres vista do telhado, rodando nativo no PC](docs/screenshots/londres-telhado.jpg)
+*4K com DLSS, limite de 120 FPS: a RTX 5090 trabalhando a ~50%. / 4K with DLSS, 120 FPS limit: the
+RTX 5090 at ~50% load. — Capturas do [vídeo de Bang4BuckPC Gamer](https://www.youtube.com/watch?v=hSzv7SaiaKk) (RTX 5090, Ryzen 9 9950X3D). /
+Captures from [Bang4BuckPC Gamer's video](https://www.youtube.com/watch?v=hSzv7SaiaKk).*
 
 | | |
 |---|---|
-| ![Corredor](docs/screenshots/corredor.jpg) | ![Telhado em cutscene](docs/screenshots/telhado-cutscene.jpg) |
+| ![Galahad e Isabeau / Galahad and Isabeau](docs/screenshots/rtx5090/cutscene-galahad-isabeau.jpg) | ![Tiroteio nas ruas de Londres / Firefight on the streets of London](docs/screenshots/rtx5090/tiroteio-rua.jpg) |
+| ![Cutscene em 4K / Cutscene at 4K](docs/screenshots/rtx5090/cutscene-perceval.jpg) | ![O salão da Bolsa / The Exchange hall](docs/screenshots/rtx5090/salao-bolsa.jpg) |
 
-*Capturas do TOport numa RTX 2060, modo Original do PS4 (2.40:1) com DLSS.*
+![Menu do TOport em 4K com DLSS / The TOport menu at 4K with DLSS](docs/screenshots/rtx5090/menu-toport-4k.jpg)
+
+*O menu do TOport (Insert) dentro do jogo: saída em 4K, NVIDIA DLSS e limite de 120 FPS. / The in-game
+TOport menu (Insert): 4K output, NVIDIA DLSS and a 120 FPS limit.*
 
 > **Nenhum arquivo do jogo vem incluído.** É preciso o seu próprio dump de **The Order: 1886**
 > (CUSA00785), de uma cópia que você possui legalmente, **com a atualização 1.02 aplicada**
@@ -47,17 +53,26 @@ sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR
 - Controle de PlayStation, Xbox ou **teclado e mouse** (WASD andar, mouse câmera, botão direito mirar,
   botão esquerdo atirar), que funcionam junto com o controle.
 
-## Desempenho
-**Topo de linha (RTX 5090, Ryzen 9 9950X3D):** 4K com DLSS a 120 FPS
-([vídeo](https://www.youtube.com/watch?v=hSzv7SaiaKk)).
+## Desempenho / Performance
+| PC | Configuração / Settings | Resultado / Result |
+|---|---|---|
+| **RTX 5090 · Ryzen 9 9950X3D** ([vídeo / video](https://www.youtube.com/watch?v=hSzv7SaiaKk)) | 4K, DLSS, limite 120 / 120 cap | **120 FPS**, GPU a ~35–50% / ~35–50% GPU load |
+| RTX 2060 6 GB · i5-10400F · 16 GB | 1080p, Original + DLSS Desempenho / Performance | até / up to ~80 FPS |
+| RTX 2060 6 GB · i5-10400F · 16 GB | 1080p, Original + DLSS Qualidade / Quality | ~40–45 FPS |
 
-**Entrada (i5-10400F, RTX 2060 6 GB, 16 GB de RAM):**
+*Quer ver o seu PC aqui? Mande uma gravação no Discord ou numa issue. / Want your PC here? Send a
+recording on Discord or in an issue.*
 
-| Configuração | Cenas pesadas |
+## Falando de nós / Talking about us
+Criadores que mostraram o TOport. Obrigado por espalharem o projeto! / Creators who showed TOport.
+Thank you for spreading the word!
+
+| | |
 |---|---|
-| Original + TAA do jogo | ~45–50 FPS |
-| Original + DLSS Qualidade | ~40–45 FPS |
-| Original + DLSS Desempenho | até ~80 FPS |
+| [![Bang4BuckPC Gamer](https://img.youtube.com/vi/hSzv7SaiaKk/mqdefault.jpg)](https://www.youtube.com/watch?v=hSzv7SaiaKk) | **[Bang4BuckPC Gamer](https://www.youtube.com/@Bang4BuckPCGamer)** — *The Order 1886 PC Port, DLSS 4K 120FPS \| RTX 5090 \| R9 9950X3D*<br>O primeiro grande vídeo do TOport, com o benchmark em 4K que ilustra esta página. / TOport's first big video, with the 4K benchmark shown on this page. |
+
+*Fez um vídeo ou uma análise do TOport? Avise no Discord ou numa issue que a gente coloca aqui. /
+Made a video or review of TOport? Tell us on Discord or in an issue and we'll add it here.*
 
 ## Requisitos
 - **The Order: 1886 (CUSA00785) atualizado para a versão 01.02**: o dump do jogo base com o
@@ -83,7 +98,7 @@ da segunda em diante tudo fica mais suave.
 - Algumas áreas ainda têm piscadas de iluminação.
 - Pontos pretos no rosto de alguns personagens (corrigidos nos já mapeados).
 - Uma cutscene com sincronia a revisar.
-- 1440p e 4K ainda não são suportados.
+- Saída em 1440p/4K e ultrawide 21:9 ainda são experimentais (há um artefato conhecido no menu acima de 1080p).
 
 Todos os capítulos estão sendo testados agora; cada versão nova traz mais correções.
 
@@ -108,7 +123,8 @@ Abra uma [issue](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/issues)
   Entertainment Inc. "The Order: 1886" é marca da Sony Interactive Entertainment LLC. Todas as
   outras marcas pertencem aos seus donos.
 - **Nenhum arquivo do jogo é distribuído**: nem executável, nem dados, nem shaders, nem artes
-  extraídas do disco. As imagens do launcher e deste README são capturas do TOport rodando.
+  extraídas do disco. As imagens do launcher e deste README são capturas do TOport rodando, algumas
+  tiradas de vídeos de criadores, com crédito em *Falando de nós*.
   O cache de shaders é gerado na máquina de cada jogador.
 - Este repositório não contém nem ensina a contornar proteções de cópia.
 - O software é fornecido "como está", sem garantias. Use por sua conta e risco.
