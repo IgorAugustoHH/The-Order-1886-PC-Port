@@ -2,7 +2,7 @@ TOport v0.1.6: suporte a monitores ultrawide 21:9 e à versão europeia (experim
 
 > ⭐ **Gostou do TOport? Deixe uma estrela no [GitHub](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port)**, isso ajuda mais gente a encontrar o projeto. / **Enjoying TOport? Star it on GitHub.**
 
-> 🎬 **4K a 120 FPS numa RTX 5090:** veja o TOport no [vídeo do Bang4BuckPC Gamer](https://www.youtube.com/watch?v=hSzv7SaiaKk). / **4K at 120 FPS on an RTX 5090:** see TOport in Bang4BuckPC Gamer's video.
+> 🎬 **4K a 120 FPS numa RTX 5090 com DLSS.** / **4K at 120 FPS on an RTX 5090 with DLSS.**
 
 ### Novo (experimental) / New (experimental)
 - **Ultrawide 21:9:** em *Imagem → Proporção da tela*, escolha **Ultrawide 21:9**. A câmera do jogo segue a proporção do seu monitor (até os 2.40:1 originais) e as faixas pretas somem: a imagem preenche a tela sem esticar e sem cortar as laterais. Funciona com a resolução *Original do PS4*, em tela cheia; em monitores 16:9 nada muda. Testado em 2560x1080. A primeira abertura depois de ligar a opção monta alguns shaders a mais. / **Ultrawide 21:9:** in *Graphics → Screen aspect*, pick **Ultrawide 21:9**. The game's camera follows your monitor's aspect (up to the original 2.40:1) and the black bars go away: the picture fills the screen without stretching or cutting the sides. Works with the *PS4 original* resolution in full screen; nothing changes on 16:9 monitors. Tested at 2560x1080.
