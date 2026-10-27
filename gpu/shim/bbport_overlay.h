@@ -32,6 +32,11 @@ bool Visible();
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
 
+/// TOport, rasterizer creation: the shader preload screen, over a cleared `view`
+/// (layout ColorAttachmentOptimal). `total` 0: unknown, the bar only moves.
+void RenderLoading(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, u32 built,
+                   u32 total, double seconds);
+
 /// The menu is open or a text entry is shown: the game's input is held neutral.
 bool CapturesInput();
 

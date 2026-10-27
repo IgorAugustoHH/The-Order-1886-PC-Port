@@ -45,6 +45,7 @@ done
 ldd "$dest/bin/bb-probe.exe" | awk '/\/clang64\/bin\// {print $3}' | sort -u | while read -r dll; do
     cp -u "$dll" "$dest/bin/"
 done
+cp launcher/loading_*.bmp "$dest/bin/"
 cp -r scripts patches "$dest/"
 cp run.py LICENSE "$dest/"
 cp packaging/windows/LEIA-ME-TOport.txt "$dest/"

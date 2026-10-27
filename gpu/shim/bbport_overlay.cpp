@@ -13,6 +13,10 @@
 #include "bbport_settings.h"
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
+#include "imgui_internal.h"
+#include <cstring>
+#include <string>
+#include <vector>
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -565,6 +569,168 @@ void SetTextEntry(bool active, const std::string& prompt, const std::string& tex
     text_entry_active = active;
     text_entry_prompt = prompt;
     text_entry_text = text;
+}
+
+/// TOport: loading_1.bmp .. loading_3.bmp next to bb-probe.exe (24/32-bit BMP, any size), shown
+/// as a carousel behind the preload screen. None: the plain screen.
+std::vector<ImTextureData*> LoadingImages() {
+    static std::vector<ImTextureData*> images;
+    static bool loaded = false;
+    if (loaded) {
+        return images;
+    }
+    loaded = true;
+    const char* base = SDL_GetBasePath();
+    for (int i = 1; i <= 3; ++i) {
+        const std::string path = std::string(base ? base : "") + "loading_" + std::to_string(i) + ".bmp";
+        SDL_Surface* bmp = SDL_LoadBMP(path.c_str());
+        if (!bmp) {
+            continue;
+        }
+        SDL_Surface* rgba = SDL_ConvertSurface(bmp, SDL_PIXELFORMAT_RGBA32);
+        SDL_DestroySurface(bmp);
+        if (!rgba) {
+            continue;
+        }
+        auto* tex = IM_NEW(ImTextureData)();
+        tex->Create(ImTextureFormat_RGBA32, rgba->w, rgba->h);
+        tex->UseColors = true;
+        for (int y = 0; y < rgba->h; ++y) {
+            std::memcpy(static_cast<u8*>(tex->GetPixels()) + size_t(y) * rgba->w * 4,
+                        static_cast<const u8*>(rgba->pixels) + size_t(y) * rgba->pitch,
+                        size_t(rgba->w) * 4);
+        }
+        SDL_DestroySurface(rgba);
+        ImGui::RegisterUserTexture(tex);
+        images.push_back(tex);
+    }
+    std::printf("Loading screen: %zu image(s)\n", images.size());
+    return images;
+}
+
+void RenderLoading(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, u32 built,
+                   u32 total, double seconds) {
+    if (!initialized) {
+        return;
+    }
+    std::scoped_lock lock{imgui_mutex};
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
+    io.DeltaTime = 1.0f / 30.0f;
+    const float scale = std::max(float(extent.height) / 1080.0f, 0.75f);
+    if (std::abs(scale - base_scale) > 0.01f) {
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.ScaleAllSizes(scale / base_scale);
+        style.FontScaleMain = scale;
+        base_scale = scale;
+    }
+
+    ImGui_ImplVulkan_NewFrame();
+    ImGui::NewFrame();
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    const ImVec2 size = io.DisplaySize;
+    const ImU32 gold = IM_COL32(201, 162, 92, 255);
+    const ImU32 dim = IM_COL32(150, 140, 125, 255);
+    // Dark vignette: a warm center fading to black at the edges.
+    draw->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(size.x, size.y * 0.5f),
+                                  IM_COL32(6, 5, 4, 255), IM_COL32(6, 5, 4, 255),
+                                  IM_COL32(24, 19, 14, 255), IM_COL32(24, 19, 14, 255));
+    draw->AddRectFilledMultiColor(ImVec2(0, size.y * 0.5f), size, IM_COL32(24, 19, 14, 255),
+                                  IM_COL32(24, 19, 14, 255), IM_COL32(6, 5, 4, 255),
+                                  IM_COL32(6, 5, 4, 255));
+
+    ImFont* font = ImGui::GetFont();
+    const auto centered = [&](const char* text, float y, float px, ImU32 color) {
+        const ImVec2 ts = font->CalcTextSizeA(px, FLT_MAX, 0.0f, text);
+        draw->AddText(font, px, ImVec2((size.x - ts.x) * 0.5f, y), color, text);
+        return ts.y;
+    };
+    // Images: cover the screen (cropped, never stretched); one every 5 s with a 1 s fade.
+    const auto images = LoadingImages();
+    const auto cover = [&](ImTextureData* tex, int alpha) {
+        const float sa = size.x / size.y, ia = float(tex->Width) / float(tex->Height);
+        ImVec2 uv0(0, 0), uv1(1, 1);
+        if (ia > sa) {
+            const float w = sa / ia;
+            uv0.x = (1.0f - w) * 0.5f, uv1.x = uv0.x + w;
+        } else {
+            const float h = ia / sa;
+            uv0.y = (1.0f - h) * 0.5f, uv1.y = uv0.y + h;
+        }
+        draw->AddImage(tex->GetTexRef(), ImVec2(0, 0), size, uv0, uv1, IM_COL32(255, 255, 255, alpha));
+    };
+    float cy = size.y * 0.42f;
+    if (!images.empty()) {
+        const double period = 5.0;
+        const size_t n = images.size();
+        const size_t cur = size_t(seconds / period) % n;
+        const float into = float(std::fmod(seconds, period));
+        cover(images[cur], 255);
+        if (n > 1 && into > period - 1.0) {
+            cover(images[(cur + 1) % n], int(255 * (into - (period - 1.0))));
+        }
+        // Dark band at the bottom so the bar and text stay readable.
+        draw->AddRectFilledMultiColor(ImVec2(0, size.y * 0.72f), size, IM_COL32(0, 0, 0, 0),
+                                      IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 220),
+                                      IM_COL32(0, 0, 0, 220));
+        cy = size.y - 190.0f * scale;
+    } else {
+        centered("THE ORDER: 1886", cy - 70.0f * scale, 56.0f * scale, gold);
+        const float line_w = 260.0f * scale;
+        draw->AddLine(ImVec2((size.x - line_w) * 0.5f, cy + 4.0f * scale),
+                      ImVec2((size.x + line_w) * 0.5f, cy + 4.0f * scale),
+                      IM_COL32(201, 162, 92, 140), 1.5f * scale);
+    }
+    centered(L("Preparando os shaders", "Preparing the shaders"), cy + 22.0f * scale,
+             22.0f * scale, IM_COL32(225, 215, 195, 255));
+
+    // Progress bar: thin gold line; with no known total a segment sweeps across.
+    const float bar_w = std::min(560.0f * scale, size.x * 0.6f);
+    const float bar_h = 4.0f * scale;
+    const ImVec2 b0((size.x - bar_w) * 0.5f, cy + 80.0f * scale);
+    const ImVec2 b1(b0.x + bar_w, b0.y + bar_h);
+    draw->AddRectFilled(b0, b1, IM_COL32(60, 50, 38, 255), bar_h);
+    if (total) {
+        const float f = std::clamp(float(built) / float(total), 0.0f, 1.0f);
+        draw->AddRectFilled(b0, ImVec2(b0.x + bar_w * f, b1.y), gold, bar_h);
+    } else {
+        const float t = float(std::fmod(seconds * 0.6, 1.0));
+        const float x0 = b0.x + bar_w * std::max(0.0f, t * 1.25f - 0.25f);
+        const float x1 = b0.x + bar_w * std::min(1.0f, t * 1.25f);
+        draw->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x1, b1.y), gold, bar_h);
+    }
+
+    char info[128];
+    if (total) {
+        std::snprintf(info, sizeof(info), L("%u de %u  ·  %.0f s", "%u of %u  ·  %.0f s"),
+                      std::min(built, total), total, seconds);
+    } else {
+        std::snprintf(info, sizeof(info), L("%u prontos  ·  %.0f s", "%u ready  ·  %.0f s"),
+                      built, seconds);
+    }
+    centered(info, b1.y + 14.0f * scale, 17.0f * scale, dim);
+    centered(L("Só nas primeiras aberturas depois de atualizar demora mais.",
+               "Only the first starts after an update take longer."),
+             size.y - 34.0f * scale, 15.0f * scale, IM_COL32(110, 102, 92, 255));
+    ImGui::Render();
+
+    const vk::RenderingAttachmentInfo attachment{
+        .imageView = view,
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eLoad,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+    };
+    cmdbuf.beginRendering(vk::RenderingInfo{
+        .renderArea = {{0, 0}, extent},
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &attachment,
+    });
+    {
+        std::scoped_lock submit_lock{Vulkan::Scheduler::submit_mutex};
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
+    }
+    cmdbuf.endRendering();
 }
 
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {

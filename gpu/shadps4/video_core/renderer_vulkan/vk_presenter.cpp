@@ -133,7 +133,7 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
                EmulatorSettings.IsVkCrashDiagnosticEnabled()},
       draw_scheduler{instance, true}, present_scheduler{instance}, flip_scheduler{instance},
       swapchain{instance, window}, runtime{instance, draw_scheduler},
-      rasterizer{std::make_unique<Rasterizer>(instance, draw_scheduler, runtime, liverpool)},
+      rasterizer{CreateRasterizerWithLoadingScreen()},
       texture_cache{rasterizer->GetTextureCache()} {
     const u32 num_images = swapchain.GetImageCount();
     const vk::Device device = instance.GetDevice();
@@ -158,6 +158,80 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
     BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images);
 
+}
+
+std::unique_ptr<Rasterizer> Presenter::CreateRasterizerWithLoadingScreen() {
+    BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, swapchain.GetImageCount());
+    g_preload_progress = [this](u32 built, u32 total, double seconds) {
+        DrawLoadingScreen(built, total, seconds);
+    };
+    auto result = std::make_unique<Rasterizer>(instance, draw_scheduler, runtime, liverpool);
+    g_preload_progress = nullptr;
+    return result;
+}
+
+void Presenter::DrawLoadingScreen(u32 built, u32 total, double seconds) {
+    if (window.GetWidth() == 0 || window.GetHeight() == 0) {
+        return;
+    }
+    if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight()) {
+        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+    }
+    if (!swapchain.AcquireNextImage()) {
+        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        return;
+    }
+    const vk::Image image = swapchain.Image();
+    const vk::Extent2D extent = swapchain.GetExtent();
+    const auto cmdbuf = present_scheduler.CommandBuffer();
+    const vk::ImageSubresourceRange range{
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .levelCount = 1,
+        .layerCount = 1,
+    };
+    const auto barrier = [&](vk::ImageLayout from, vk::ImageLayout to, vk::AccessFlags src,
+                             vk::AccessFlags dst, vk::PipelineStageFlags src_stage,
+                             vk::PipelineStageFlags dst_stage) {
+        const vk::ImageMemoryBarrier b{
+            .srcAccessMask = src,
+            .dstAccessMask = dst,
+            .oldLayout = from,
+            .newLayout = to,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = image,
+            .subresourceRange = range,
+        };
+        cmdbuf.pipelineBarrier(src_stage, dst_stage, vk::DependencyFlagBits::eByRegion, {}, {}, b);
+    };
+    barrier(vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, {},
+            vk::AccessFlagBits::eTransferWrite, vk::PipelineStageFlagBits::eTopOfPipe,
+            vk::PipelineStageFlagBits::eTransfer);
+    const vk::ClearColorValue black{std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
+    cmdbuf.clearColorImage(image, vk::ImageLayout::eTransferDstOptimal, black, range);
+    barrier(vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eColorAttachmentOptimal,
+            vk::AccessFlagBits::eTransferWrite,
+            vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    BbOverlay::RenderLoading(cmdbuf, swapchain.ImageView(), extent, built, total, seconds);
+    barrier(vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
+            vk::AccessFlagBits::eColorAttachmentWrite, {},
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits::eBottomOfPipe);
+
+    SubmitInfo info{};
+    info.AddWait(swapchain.GetImageAcquiredSemaphore());
+    info.AddSignal(swapchain.GetPresentReadySemaphore());
+    present_scheduler.Flush(info);
+    {
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
+        if (!swapchain.Present()) {
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
+    }
+    // One frame in flight: the next draw reuses the same command pool and semaphores.
+    present_scheduler.Finish();
 }
 
 Presenter::~Presenter() {

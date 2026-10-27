@@ -108,6 +108,10 @@ private:
 
     void SetExpectedGameSize(s32 width, s32 height);
 
+    /// TOport: overlay ready and the preload hook set, before the rasterizer is built.
+    std::unique_ptr<Rasterizer> CreateRasterizerWithLoadingScreen();
+    void DrawLoadingScreen(u32 built, u32 total, double seconds);
+
 private:
     float expected_ratio{1920.0 / 1080.0f};
     u32 expected_frame_width{1920};

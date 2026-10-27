@@ -7,6 +7,7 @@ TOport v0.1.5: fim das travadas de shader de iluminação no menu e no jogo. / N
 ### Mudado / Changed
 - **Shaders de compute compilam em segundo plano:** quando surge uma variação nova, o jogo não para mais; aquele lote de partículas pode ficar sem luz por alguns quadros na primeira vez. / **Compute shaders compile in the background:** a new variant no longer stalls the game; that particle batch may be unlit for a few frames the first time.
 - **Cache de pipelines do driver ligado:** shaders já vistos carregam em milissegundos nas próximas aberturas (com proteção de memória no salvamento). / **Driver pipeline cache on:** shaders seen before load in milliseconds on later starts (with a memory guard when saving).
+- **Tela de pré-carregamento:** em vez de uma janela preta, um carrossel com três artes do TOport, a barra de progresso e o contador de shaders. / **Preload screen:** instead of a black window, a carousel of three TOport artworks, a progress bar and the shader count.
 - A abertura caiu para cerca de 5 segundos de pré-carregamento. / Startup preload is down to about 5 seconds.
 
 ### Se travar / If it crashes

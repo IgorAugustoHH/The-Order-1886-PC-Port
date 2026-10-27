@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_set>
@@ -46,6 +47,10 @@ namespace Vulkan {
 class Instance;
 class Scheduler;
 class ShaderCache;
+
+/// TOport: set by the presenter while the rasterizer is built, so the startup preload draws a
+/// loading screen (built pipelines, expected total or 0 when unknown, seconds).
+inline std::function<void(u32, u32, double)> g_preload_progress;
 
 struct Program {
     struct Module {

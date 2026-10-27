@@ -500,6 +500,11 @@ void PipelineCache::WarmUp() {
     const long budget_ms = budget_env ? std::max(0L, std::strtol(budget_env, nullptr, 10)) : 0;
     const auto preload_begin = std::chrono::steady_clock::now();
     u32 budget_deferred{};
+    const u32 expected = recent_filter ? u32(recent_preload.size()) : 0;
+    auto last_frame = preload_begin;
+    if (g_preload_progress) {
+        g_preload_progress(0, expected, 0.0);
+    }
 
     Storage::DataBase::Instance().ForEachBlob(
         Storage::BlobType::PipelineKey, [&](std::vector<u8>&& data) {
@@ -538,6 +543,11 @@ void PipelineCache::WarmUp() {
             // test console that follows it) instead of looking like a hang.
             static auto last_report = preload_begin;
             const auto now = std::chrono::steady_clock::now();
+            if (g_preload_progress && now - last_frame >= std::chrono::milliseconds(33)) {
+                last_frame = now;
+                g_preload_progress(num_pipelines, expected,
+                                   std::chrono::duration<double>(now - preload_begin).count());
+            }
             if (now - last_report >= std::chrono::seconds(2)) {
                 last_report = now;
                 std::printf("Startup preload progress: %u built, %u scanned, %.0f s\n",
