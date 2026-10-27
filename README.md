@@ -16,12 +16,11 @@ sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR
 **[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)** ·
 **⭐ Gostou? Deixe uma estrela no topo da página, isso ajuda o projeto a ser encontrado.**
 
-## 4K a 120 FPS numa RTX 5090 / 4K at 120 FPS on an RTX 5090
-[![TOport a 120 FPS numa RTX 5090 / TOport at 120 FPS on an RTX 5090](docs/screenshots/rtx5090/benchmark-telhado.jpg)](https://www.youtube.com/watch?v=hSzv7SaiaKk)
+## Performance numa RTX 5090 / Performance on an RTX 5090
+![TOport a 120 FPS numa RTX 5090 / TOport at 120 FPS on an RTX 5090](docs/screenshots/rtx5090/benchmark-telhado.jpg)
 
-*4K com DLSS, limite de 120 FPS: a RTX 5090 trabalhando a ~50%. / 4K with DLSS, 120 FPS limit: the
-RTX 5090 at ~50% load. — Capturas do [vídeo de Bang4BuckPC Gamer](https://www.youtube.com/watch?v=hSzv7SaiaKk) (RTX 5090, Ryzen 9 9950X3D). /
-Captures from [Bang4BuckPC Gamer's video](https://www.youtube.com/watch?v=hSzv7SaiaKk).*
+*4K com DLSS e limite de 120 FPS: a RTX 5090 trabalhando a ~50%. / 4K with DLSS and a 120 FPS limit: the
+RTX 5090 at ~50% load.*
 
 | | |
 |---|---|
@@ -56,7 +55,7 @@ TOport menu (Insert): 4K output, NVIDIA DLSS and a 120 FPS limit.*
 ## Desempenho / Performance
 | PC | Configuração / Settings | Resultado / Result |
 |---|---|---|
-| **RTX 5090 · Ryzen 9 9950X3D** ([vídeo / video](https://www.youtube.com/watch?v=hSzv7SaiaKk)) | 4K, DLSS, limite 120 / 120 cap | **120 FPS**, GPU a ~35–50% / ~35–50% GPU load |
+| **RTX 5090 · Ryzen 9 9950X3D** | 4K, DLSS, limite 120 / 120 cap | **120 FPS**, GPU a ~35–50% / ~35–50% GPU load |
 | RTX 2060 6 GB · i5-10400F · 16 GB | 1080p, Original + DLSS Desempenho / Performance | até / up to ~80 FPS |
 | RTX 2060 6 GB · i5-10400F · 16 GB | 1080p, Original + DLSS Qualidade / Quality | ~40–45 FPS |
 
@@ -67,9 +66,10 @@ recording on Discord or in an issue.*
 Criadores que mostraram o TOport. Obrigado por espalharem o projeto! / Creators who showed TOport.
 Thank you for spreading the word!
 
-| | |
-|---|---|
-| [![Bang4BuckPC Gamer](https://img.youtube.com/vi/hSzv7SaiaKk/mqdefault.jpg)](https://www.youtube.com/watch?v=hSzv7SaiaKk) | **[Bang4BuckPC Gamer](https://www.youtube.com/@Bang4BuckPCGamer)** — *The Order 1886 PC Port, DLSS 4K 120FPS \| RTX 5090 \| R9 9950X3D*<br>O primeiro grande vídeo do TOport, com o benchmark em 4K que ilustra esta página. / TOport's first big video, with the 4K benchmark shown on this page. |
+- **Bang4BuckPC Gamer:** o TOport em 4K com DLSS numa RTX 5090 e Ryzen 9 9950X3D; as capturas de
+  desempenho desta página vêm desse vídeo. [Assistir no YouTube](https://www.youtube.com/watch?v=hSzv7SaiaKk). / TOport at 4K with DLSS on an
+  RTX 5090 and Ryzen 9 9950X3D; the performance captures on this page come from this video.
+  [Watch on YouTube](https://www.youtube.com/watch?v=hSzv7SaiaKk).
 
 *Fez um vídeo ou uma análise do TOport? Avise no Discord ou numa issue que a gente coloca aqui. /
 Made a video or review of TOport? Tell us on Discord or in an issue and we'll add it here.*
