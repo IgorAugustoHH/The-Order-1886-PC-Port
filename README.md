@@ -2,11 +2,13 @@
 
 [![Downloads](https://img.shields.io/github/downloads/IgorAugustoHH/The-Order-1886-PC-Port/total?label=downloads&color=c9a227)](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases) [![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/486-the-order-1886/)
 
-**The Order: 1886 rodando nativo no Windows 10/11: câmera cinematográfica original do PS4, NVIDIA DLSS,
-até 4K a 120 FPS, ultrawide 21:9, 23 idiomas e um launcher próprio.**
+**O primeiro port de The Order: 1886 para PC, e o que trouxe a maioria das correções de bugs até
+agora, hoje amplamente usadas por outros projetos. Roda nativo no Windows 10/11: câmera cinematográfica
+original do PS4, NVIDIA DLSS, até 4K a 120 FPS, ultrawide 21:9, 23 idiomas e um launcher próprio.**
 
-*The Order: 1886 running natively on Windows 10/11: the PS4's original cinematic camera, NVIDIA DLSS,
-up to 4K at 120 FPS, 21:9 ultrawide, 23 languages and its own launcher.*
+*The first PC port of The Order: 1886, and the one behind most of the bug fixes so far, now widely
+used by other projects. It runs natively on Windows 10/11: the PS4's original cinematic camera,
+NVIDIA DLSS, up to 4K at 120 FPS, 21:9 ultrawide, 23 languages and its own launcher.*
 
 O jogo roda direto no processador do PC, sem emulação de CPU. Só o que muda entre PS4 e PC é traduzido:
 as funções do sistema da Sony e a GPU, cujos comandos e shaders viram Vulkan. Sem janela de emulador,
