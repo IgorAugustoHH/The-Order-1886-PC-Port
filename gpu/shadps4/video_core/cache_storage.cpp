@@ -239,6 +239,28 @@ void DataBase::Load(BlobType type, const std::string& name, std::vector<u32>& da
     return LoadVector(type, path, data);
 }
 
+void DataBase::ForEachBlobNamed(
+    BlobType type, const std::function<void(const std::string&, std::vector<u8>&&)>& func) {
+    if (EmulatorSettings.IsPipelineCacheArchived() || !opened) {
+        return;
+    }
+    const auto ext = "." + GetBlobFileExtension(type);
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator{cache_path, ec}) {
+        const auto& path = entry.path();
+        if (path.extension().string() != ext) {
+            continue;
+        }
+        using namespace Common::FS;
+        const auto& file = IOFile{path, FileAccessMode::Read};
+        if (file.IsOpen()) {
+            std::vector<u8> data(file.GetSize());
+            file.Read(data);
+            func(path.stem().string(), std::move(data));
+        }
+    }
+}
+
 void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u8>&& data)>& func) {
     const auto& ext = GetBlobFileExtension(type);
     if (EmulatorSettings.IsPipelineCacheArchived()) {

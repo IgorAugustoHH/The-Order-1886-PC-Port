@@ -31,4 +31,11 @@ struct Pools {
                                            Info& info, RuntimeInfo& runtime_info,
                                            const Profile& profile);
 
+/// bbport (Claude, 28/10): BB_TRANSLATE_PROFILE=1 times every translation phase (no effect off).
+bool TranslateProfileOn();
+/// Adds a phase of the shader being translated on this thread.
+void TranslateProfileAdd(const char* phase, u64 ns);
+/// Closes the shader: per-shader line (slowest phases) and the periodic phase totals.
+void TranslateProfileDone(u64 pgm_hash, u32 stage, size_t instructions);
+
 } // namespace Shader

@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -47,7 +48,8 @@ typedef struct {
 _Static_assert(sizeof(GuestStat)==120,"FreeBSD stat layout");
 
 typedef struct { char *names; size_t count, *offsets; unsigned char *types; } Listing;
-typedef struct { int used, host; Listing *dir; size_t position; char path[512]; } File;
+typedef struct { int used, host; Listing *dir; size_t position; char path[512];
+                 uint64_t package, package_noted; } File;
 typedef struct { char guest[64]; char host[512]; } Mount;
 static File files[MAX_FILES];
 static Mount mounts[MAX_MOUNTS];
@@ -198,6 +200,40 @@ static int game_path(const char *p) {
     return (!strncmp(p,"/app0",5) && (!p[5] || p[5]=='/')) ||
            (!strncmp(p,"/hostapp",8) && (!p[8] || p[8]=='/'));
 }
+/* The game streams an area by reading its packages in .../ps4/GPU/ (opened once, early): their
+   file name (16 hex digits) tells the area prefetch which shaders are coming. */
+static uint64_t gpu_package(const char *guest) {
+    /* The game writes the folders in lower case (ps4/gpu/, ps4/primary/); each area opens
+       primary/<name> and then gpu/<name>: the first one already names the area. */
+    const char *ps4=strstr(guest,"/ps4/");
+    if (!ps4) return 0;
+    char folder[16]={0};
+    for (int i=0;i<15 && ps4[5+i] && ps4[5+i]!='/';++i) folder[i]=(char)tolower((unsigned char)ps4[5+i]);
+    if (strcmp(folder,"gpu") && strcmp(folder,"primary")) return 0;
+    const char *name=strrchr(ps4,'/')+1;
+    if (strlen(name)!=16) return 0;
+    char *end=NULL;
+    const uint64_t package=strtoull(name,&end,16);
+    return end && !*end ? package : 0;
+}
+static int area_trace(void) { static int v=-1; if (v<0) { const char *e=getenv("BB_AREA_TRACE"); v=e && e[0]=='1'; } return v; }
+/* A read of a GPU package: notify the prefetch at most every 2 s per descriptor. */
+static void note_package_read(int fd) {
+    File *f=get(fd);
+    if (area_trace() && f && strstr(f->path,"_data")) {
+        static int traced;
+        if (traced++<80) printf("Area trace: read fd %d %s package %016llx\n",fd,f->path,(unsigned long long)f->package);
+    }
+    if (!f || !f->package) return;
+    const uint64_t now=runtime_wait_begin();
+    if (f->package_noted && now-f->package_noted<2000000000ull) return;
+    f->package_noted=now;
+    if (area_trace()) {
+        static int traced;
+        if (traced++<40) printf("Area trace: notify package %016llx%c",(unsigned long long)f->package,10);
+    }
+    bb_area_package_opened(f->package);
+}
 /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
 static int64_t do_open(const char *guest,int flags,int mode) {
     if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
@@ -241,10 +277,16 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     int fd=-1;
     for (int i=3;i<MAX_FILES;++i) if (!files[i].used) { fd=i; break; }
     if (fd<0) { pthread_mutex_unlock(&lock); if (host>=0) close(host); free_listing(dir); return -EMFILE; }
-    files[fd]=(File){.used=1,.host=host,.dir=dir};
+    files[fd]=(File){.used=1,.host=host,.dir=dir,.package=gpu_package(guest)};
+    const uint64_t opened_package=files[fd].package;
+    if (area_trace() && strstr(guest,"_data")) {
+        static int traced;
+        if (traced++<80) printf("Area trace: open fd %d %s package %016llx\n",fd,guest,(unsigned long long)files[fd].package);
+    }
     snprintf(files[fd].path,sizeof(files[fd].path),"%s",guest);
     ++opens;
     pthread_mutex_unlock(&lock);
+    if (opened_package) bb_area_package_opened(opened_package);
     if (audio_trace() && strstr(guest,"sound/")) printf("Audio trace: open(%s) -> fd %d, %lld bytes\n",guest,fd,(long long)s.st_size);
     const char *mod_trace=getenv("BB_MOD_TRACE"), *mod_root=getenv("BB_MODS_DIR");
     if (mod_trace && mod_trace[0]=='1' && mod_root) {
@@ -314,6 +356,7 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
     runtime_wait_end("file read",wait_start,"bytes",(long long)size);
     if (n<0) { if (audio_trace()) printf("Audio trace: read(fd %d, %llu) failed, errno %d\n",fd,(unsigned long long)size,(int)-n); return n; }
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
+    note_package_read(fd);
     return n;
 }
 static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
@@ -324,6 +367,7 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     runtime_wait_end("file pread",wait_start,"bytes",(long long)size);
     if (n<0) { if (audio_trace()) printf("Audio trace: pread(fd %d, %llu @%lld) failed, errno %d\n",fd,(unsigned long long)size,(long long)offset,(int)-n); return n; }
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
+    note_package_read(fd);
     return n;
 }
 static int64_t do_write(int fd,const void *buffer,uint64_t size) {

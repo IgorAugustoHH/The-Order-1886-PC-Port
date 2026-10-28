@@ -135,6 +135,40 @@ public:
     ~PipelineCache();
 
     void WarmUp();
+    /// bbport: programs stored by earlier sessions, loaded on their first use in this one
+    /// instead of translated again (BB_DISK_PROGRAMS=0: off). The index (program hash ->
+    /// stored content keys) is built on a background thread after the warm-up.
+    void StartDiskProgramIndex();
+    bool LoadProgramFromDisk(u64 pgm_hash);
+    std::unique_ptr<Program> PrepareProgramFromDisk(u64 pgm_hash);
+    /// A program this session stored: added to the index, saved again within a minute.
+    void NoteStoredProgram(u64 pgm_hash, u64 content_key);
+    void SaveDiskIndex();
+
+    /// bbport: area prefetch. The game streams an area by opening its GPU packages; the programs a
+    /// package holds (the local package index, built once from the player's own dump) that the
+    /// cache stores are prepared on a background thread before their first draw
+    /// (BB_AREA_PREFETCH=0: off).
+    int AreaIndexNeeded();
+    void AreaPackageShader(u64 package, u64 pgm_hash);
+    void AreaIndexDone();
+    void AreaPackageOpened(u64 package);
+
+    void StartAreaPrefetch();
+    void AreaPrefetchLoop(std::stop_token stop);
+    struct PreparedProgram {
+        std::unique_ptr<Program> program;
+        std::chrono::steady_clock::time_point ready_at;
+    };
+    std::mutex area_mutex;
+    std::condition_variable_any area_cv;
+    std::unordered_map<u64, std::vector<u64>> package_shaders; ///< guarded by area_mutex
+    std::unordered_map<u64, std::vector<u64>> package_building; ///< guarded by area_mutex
+    std::deque<u64> opened_packages;                             ///< guarded by area_mutex
+    std::unordered_map<u64, PreparedProgram> prepared_programs;  ///< guarded by area_mutex
+    std::deque<u64> prepared_order;                              ///< guarded by area_mutex
+    int area_index_state = -1; ///< -1 unknown, 0 loaded, 1 to build (guarded by area_mutex)
+    std::jthread area_thread;
     void Sync();
 
     bool LoadComputePipeline(Serialization::Archive& ar);
@@ -200,6 +234,11 @@ private:
     /// bbport: SPIR-V of the last CompileModule, stored once its specialization (content key)
     /// is known. GPU thread only.
     std::vector<u32> last_spv;
+    /// bbport: BB_CACHE_VERIFY, see vk_pipeline_cache.cpp.
+    void VerifyStoredModule(const Program& program, const Program::Module& stored, Shader::HwStage hw_stage,
+                            Shader::SwStage sw_stage, const Shader::ShaderParams& params,
+                            const Shader::RuntimeInfo& runtime_info,
+                            const Shader::Backend::Bindings& binding);
 
     /// bbport: recently used pipelines (see NoteUsed), in work/user/shader/pipelines_recentes.txt.
     void NoteUsedSlow(const Pipeline* pipeline);
@@ -236,6 +275,13 @@ private:
     tsl::robin_map<size_t, std::unique_ptr<Program>> program_cache;
     /// bbport: exclusive for program/permutation insertions, shared for worker lookups.
     std::shared_mutex programs_mutex;
+    std::mutex disk_index_mutex;
+    std::unordered_map<u64, std::vector<u64>> disk_programs; ///< guarded by disk_index_mutex
+    /// bbport: new programs whose Info a compile thread is producing (GPU thread only).
+    std::unordered_set<u64> pending_new_programs;
+    std::atomic<bool> disk_index_ready{false};
+    bool disk_index_dirty = false; ///< guarded by disk_index_mutex
+    std::jthread disk_index_thread;
     u64 prepared_hits = 0, prepared_misses = 0;
     const PreparedDraw* used_prepared = nullptr;
     tsl::robin_map<ComputePipelineKey, std::unique_ptr<ComputePipeline>> compute_pipelines;
@@ -285,10 +331,14 @@ private:
         u64 hash{};
         Shader::RuntimeInfo runtime_info{};
         Shader::Backend::Bindings binding{};
+        /// bbport: a program never translated: the compile thread only produces its Info.
+        bool new_program{};
     };
     struct AsyncShaderResult {
         u64 diag_ticket{};
         Program* program{};
+        std::unique_ptr<Shader::Info> new_info; ///< set for a new program (see AsyncShaderJob)
+        u64 hash{};
         Shader::StageSpecialization spec{};
         vk::ShaderModule module{};
         std::vector<u32> spv;
@@ -314,6 +364,9 @@ private:
     std::unordered_set<ComputePipelineKey> async_compute_pending; ///< GPU thread only
     bool async_compute = false;
     bool AsyncComputeOn() const;
+    /// bbport: a compute dispatch may be skipped while compiling only for recurring programs.
+    bool ComputeMaySkip(u64 pgm_hash) const;
+    void NoteComputeDispatch(u64 pgm_hash);
     std::deque<AsyncShaderJob> async_shader_jobs;       ///< guarded by async_mutex
     std::vector<AsyncShaderResult> async_shader_done;   ///< guarded by async_mutex
     bool async_shaders = false;
@@ -340,5 +393,7 @@ private:
     /// Last: stopped and joined before anything they use is destroyed.
     std::vector<std::jthread> async_compilers;
 };
+
+extern std::atomic<PipelineCache*> g_area_cache;
 
 } // namespace Vulkan

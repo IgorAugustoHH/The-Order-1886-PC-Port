@@ -697,6 +697,7 @@ int main(int argc, char **argv) {
             if (result) fail("module initializer failed");
         }
     }
+    runtime_oodle_index_start(image,app0);
     printf("Entering original x86-64 code at guest offset 0x%" PRIx64 "\n", entry);
     entered_game=1;
     /* BB_GAME_ARGS: space-separated arguments for the game's main (The Order reads -use1080p,

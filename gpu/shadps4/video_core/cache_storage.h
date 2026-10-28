@@ -42,6 +42,9 @@ public:
     void Load(BlobType type, const std::string& name, std::vector<u32>& data);
 
     void ForEachBlob(BlobType type, const std::function<void(std::vector<u8>&& data)>& func);
+    /// bbport: the blobs of a type with their names (directory cache only).
+    void ForEachBlobNamed(BlobType type,
+                          const std::function<void(const std::string&, std::vector<u8>&&)>& func);
 
 private:
     std::jthread io_worker{};

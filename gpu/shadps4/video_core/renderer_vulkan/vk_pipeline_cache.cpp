@@ -57,7 +57,27 @@ u64 AvailableRamMiB() {
 #endif
     return 0;
 }
+
 } // namespace
+
+namespace Vulkan {
+std::atomic<PipelineCache*> g_area_cache{nullptr};
+} // namespace Vulkan
+
+// bbport: area prefetch bridge for the C runtime (src/runtime_file.c, src/runtime_oodle_index.c).
+extern "C" int bb_area_index_needed(void) {
+    auto* cache = Vulkan::g_area_cache.load();
+    return cache ? cache->AreaIndexNeeded() : -1;
+}
+extern "C" void bb_area_package_shader(uint64_t package, uint64_t pgm_hash) {
+    if (auto* cache = Vulkan::g_area_cache.load()) cache->AreaPackageShader(package, pgm_hash);
+}
+extern "C" void bb_area_index_done(void) {
+    if (auto* cache = Vulkan::g_area_cache.load()) cache->AreaIndexDone();
+}
+extern "C" void bb_area_package_opened(uint64_t package) {
+    if (auto* cache = Vulkan::g_area_cache.load()) cache->AreaPackageOpened(package);
+}
 
 namespace Vulkan {
 
@@ -433,6 +453,9 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     startup_mark("WarmUp begin");
     WarmUp();
     startup_mark("WarmUp end");
+    StartDiskProgramIndex();
+    StartAreaPrefetch();
+    g_area_cache.store(this);
     StartAsyncCompilers();
     startup_mark("async compiler start end");
     if (!persist) {
@@ -514,6 +537,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
 }
 
 PipelineCache::~PipelineCache() {
+    g_area_cache.store(nullptr);
+    area_thread = {};
     for (auto& compiler : async_compilers) {
         compiler.request_stop();
     }
@@ -529,14 +554,93 @@ std::atomic<u64> g_bb_compile_ns;
 std::atomic<u32> g_bb_compiles;
 std::atomic<u64> g_bb_compiles_total; ///< never reset (the driver cache saver compares it)
 namespace {
+// bbport (Claude, 28/10): BB_COMPILE_SPLIT=1 reports every 5 s where compile time goes: shader
+// translation (GCN -> SPIR-V module), graphics and compute pipelines (driver), each on the GPU
+// thread (it stalls the frame) or on the background compile threads.
+enum CompileKind : u32 { CompileShader, CompileGraphics, CompileCompute, CompileKinds };
+thread_local bool tl_compile_worker = false;
+std::atomic<u64> g_split_ns[CompileKinds][2];
+std::atomic<u64> g_split_count[CompileKinds][2];
+std::atomic<s64> g_split_report{0};
+
+void ReportCompileSplit() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_COMPILE_SPLIT");
+        return env && env[0] == '1';
+    }();
+    if (!enabled) {
+        return;
+    }
+    const s64 now = std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+    s64 last = g_split_report.load(std::memory_order_relaxed);
+    if (now < last + 5 || !g_split_report.compare_exchange_strong(last, now)) {
+        return;
+    }
+    static const char* names[CompileKinds] = {"shader", "graphics pipeline", "compute pipeline"};
+    for (u32 kind = 0; kind < CompileKinds; ++kind) {
+        const auto take = [&](u32 where, u64& count, double& ms) {
+            count = g_split_count[kind][where].exchange(0);
+            ms = g_split_ns[kind][where].exchange(0) / 1e6;
+        };
+        u64 gpu_count, bg_count;
+        double gpu_ms, bg_ms;
+        take(0, gpu_count, gpu_ms);
+        take(1, bg_count, bg_ms);
+        if (gpu_count || bg_count) {
+            std::printf("Compile split %s: GPU thread %llu (%.1f ms, avg %.1f), background %llu "
+                        "(%.1f ms)\n",
+                        names[kind], (unsigned long long)gpu_count, gpu_ms,
+                        gpu_count ? gpu_ms / gpu_count : 0.0, (unsigned long long)bg_count, bg_ms);
+        }
+    }
+}
+
+// Times a phase for BB_TRANSLATE_PROFILE (Shader::TranslateProfileAdd).
+struct ProfilePhase {
+    const char* name;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~ProfilePhase() {
+        Shader::TranslateProfileAdd(name, u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                  std::chrono::steady_clock::now() - start).count()));
+    }
+};
+
+// BB_SPV_DIGEST=1: FNV-1a 64 of each SPIR-V module this session translates (proof that an
+// optimization of the recompiler leaves its output byte for byte the same).
+void LogSpvDigest(u64 pgm_hash, std::span<const u32> spv) {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_SPV_DIGEST");
+        return env && env[0] == '1';
+    }();
+    if (!on) {
+        return;
+    }
+    u64 digest = 0xcbf29ce484222325ull;
+    for (const u32 word : spv) {
+        for (u32 i = 0; i < 4; ++i) {
+            digest = (digest ^ ((word >> (i * 8)) & 0xff)) * 0x100000001b3ull;
+        }
+    }
+    std::printf("SPIR-V digest: shader %016llx spv %016llx words %zu\n",
+                (unsigned long long)pgm_hash, (unsigned long long)digest, spv.size());
+}
+
 struct CompileTimer {
+    explicit CompileTimer(CompileKind kind_ = CompileShader) : kind{kind_} {}
+    CompileKind kind;
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     ~CompileTimer() {
-        g_bb_compile_ns += u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                   std::chrono::steady_clock::now() - start)
-                                   .count());
+        const u64 ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                               std::chrono::steady_clock::now() - start)
+                               .count());
+        g_bb_compile_ns += ns;
         ++g_bb_compiles;
         ++g_bb_compiles_total;
+        const u32 where = tl_compile_worker ? 1 : 0;
+        g_split_ns[kind][where] += ns;
+        ++g_split_count[kind][where];
+        ReportCompileSplit();
     }
 };
 } // namespace
@@ -650,7 +754,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             for (u32 stage = 0; stage < MaxShaderStages; ++stage)
                 if (sel.infos[stage]) BbSceneDiag::Event("graphics_stage", pipeline_hash, sel.infos[stage]->pgm_hash, stage);
         }
-        CompileTimer timer;
+        CompileTimer timer{CompileGraphics};
 
         GraphicsPipeline::SerializationSupport sdata{};
         it.value() = std::make_unique<GraphicsPipeline>(
@@ -702,6 +806,7 @@ void PipelineCache::StartAsyncCompilers() {
     for (u32 i = 0; i < NumCompilers; ++i) {
         async_compilers.emplace_back([this, NumCompilers](std::stop_token stop) {
             Common::SetCurrentThreadName("bb:PipelineCompile");
+            tl_compile_worker = true;
             if (!aggressive_compile) Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
             Shader::Pools worker_pools; // the translator's pools are per thread
             for (;;) {
@@ -780,7 +885,7 @@ void PipelineCache::StartAsyncCompilers() {
                     AsyncComputeResult result{};
                     result.key = cj.key;
                     {
-                        CompileTimer timer;
+                        CompileTimer timer{CompileCompute};
                         result.pipeline = std::make_unique<ComputePipeline>(
                             instance, scheduler, desc_heap, profile, *pipeline_cache, cj.key,
                             *cj.snapshot, cj.module, result.sdata, false);
@@ -803,13 +908,45 @@ void PipelineCache::StartAsyncCompilers() {
                     info.pgm_base = sj.pgm_base;
                     info.flatbuf_snapshot = &sj.flatbuf;
                     AsyncShaderResult result{};
+                    if (sj.new_program) {
+                        // Translated for its Info (resources, tables, layout); the module the
+                        // draws use comes from the permutation translated afterwards. As the
+                        // GPU thread's first translation: no flattened user data snapshot.
+                        info.flatbuf_snapshot = nullptr;
+                        {
+                            CompileTimer timer;
+                            const auto ir_program = Shader::TranslateProgram(
+                                sj.code, worker_pools, info, sj.runtime_info, profile);
+                            Shader::Backend::Bindings binding = sj.binding;
+                            (void)Shader::Backend::SPIRV::EmitSPIRV(profile, sj.runtime_info,
+                                                                    ir_program, binding);
+                        }
+                        worker_pools.ReleaseContents();
+                        result.diag_ticket = sj.diag_ticket;
+                        result.hash = sj.hash;
+                        result.new_info = std::make_unique<Shader::Info>(info);
+                        {
+                            std::scoped_lock lock{async_mutex};
+                            async_shader_done.push_back(std::move(result));
+                        }
+                        async_done_count.fetch_add(1, std::memory_order_release);
+                        continue;
+                    }
                     {
                         CompileTimer timer;
                         const auto ir_program = Shader::TranslateProgram(
                             sj.code, worker_pools, info, sj.runtime_info, profile);
-                        result.spv = Shader::Backend::SPIRV::EmitSPIRV(profile, sj.runtime_info,
-                                                                       ir_program, sj.binding);
-                        result.module = CompileSPV(result.spv, instance.GetDevice());
+                        {
+                            ProfilePhase phase{"EmitSPIRV"};
+                            result.spv = Shader::Backend::SPIRV::EmitSPIRV(
+                                profile, sj.runtime_info, ir_program, sj.binding);
+                        }
+                        {
+                            ProfilePhase phase{"CompileSPV (driver module)"};
+                            result.module = CompileSPV(result.spv, instance.GetDevice());
+                        }
+                        Shader::TranslateProfileDone(sj.hash, u32(sj.hw_stage), sj.code.size());
+                        LogSpvDigest(sj.hash, result.spv);
                         if (sj.sw_stage == SwStage::Vertex)
                             BbFaceDepth::Register(result.module, result.spv, sj.hash);
                     }
@@ -832,7 +969,7 @@ void PipelineCache::StartAsyncCompilers() {
                 AsyncGraphicsResult result{};
                 result.key = job.key;
                 {
-                    CompileTimer timer;
+                    CompileTimer timer{CompileGraphics};
                     result.pipeline = std::make_unique<GraphicsPipeline>(
                         instance, scheduler, desc_heap, profile, job.key, *pipeline_cache, infos,
                         job.runtime_infos, job.fetch_shader, job.modules, result.sdata, false);
@@ -866,6 +1003,23 @@ void PipelineCache::DrainAsyncPipelines() {
         async_done_count.store(0, std::memory_order_relaxed);
     }
     for (auto& result : shaders_done) {
+        if (result.new_info) {
+            pending_new_programs.erase(result.hash);
+            if (program_cache.find(result.hash) != program_cache.end()) {
+                continue; // loaded from the disk cache meanwhile
+            }
+            auto program = std::make_unique<Program>();
+            program->info = *result.new_info;
+            program->info_template = std::make_unique<Shader::Info>(program->info);
+            std::unique_lock lk{programs_mutex};
+            program_cache.emplace(result.hash, std::move(program));
+            static u32 logged = 0;
+            if (logged++ < 300) {
+                std::printf("Async new program: %016llx ready for specialization\n",
+                            static_cast<unsigned long long>(result.hash));
+            }
+            continue;
+        }
         Program& program = *result.program;
         BbSceneDiag::Event("shader_ready", result.diag_ticket, program.info.pgm_hash);
         auto& pending = program.pending_specs;
@@ -904,6 +1058,55 @@ bool PipelineCache::AsyncComputeOn() const {
     return async_compute && !BbToggle::Disabled(BbToggle::AsyncCompute);
 }
 
+// bbport (Claude, 28/10): a skipped dispatch only heals by itself when the program runs again in
+// the next frames (lighting, post effects). Work done once (map and geometry setup) stayed broken
+// for good when skipped: textures stretched on the map until the area reloaded. A compute program
+// may be skipped while it compiles only after it has been seen dispatching in several separate
+// moments; before that its dispatch waits for the compile, as before v0.1.5.
+// BB_COMPUTE_SKIP_ALL=1: every compute may be skipped (v0.1.5 behaviour).
+namespace {
+struct ComputeSeen {
+    std::chrono::steady_clock::time_point last{};
+    u32 moments = 0;
+};
+std::unordered_map<u64, ComputeSeen> g_compute_seen; // GPU thread only
+constexpr u32 RecurringMoments = 3;
+} // namespace
+
+void PipelineCache::NoteComputeDispatch(u64 pgm_hash) {
+    auto& seen = g_compute_seen[pgm_hash];
+    const auto now = std::chrono::steady_clock::now();
+    if (seen.moments == 0 || now - seen.last > std::chrono::milliseconds(12)) {
+        if (seen.moments < RecurringMoments) {
+            ++seen.moments;
+        }
+        seen.last = now;
+    }
+}
+
+bool PipelineCache::ComputeMaySkip(u64 pgm_hash) const {
+    static const bool skip_all = [] {
+        const char* env = std::getenv("BB_COMPUTE_SKIP_ALL");
+        return env && env[0] == '1';
+    }();
+    if (!AsyncComputeOn()) {
+        return false;
+    }
+    if (skip_all) {
+        return true;
+    }
+    const auto it = g_compute_seen.find(pgm_hash);
+    const bool recurring = it != g_compute_seen.end() && it->second.moments >= RecurringMoments;
+    if (!recurring) {
+        static u32 logged = 0;
+        if (logged++ < 100) {
+            std::printf("Compute wait: %016llx not yet recurring, dispatch waits for its compile\n",
+                        (unsigned long long)pgm_hash);
+        }
+    }
+    return recurring;
+}
+
 const ComputePipeline* PipelineCache::GetComputePipeline() {
     {
         // bbport (Claude, 13/10): run98 lost the device on an NVIDIA "Graphics Exception:
@@ -931,7 +1134,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         shader_pending = false; // permutation translating on a compile thread: skipped
         return nullptr;
     }
-    if (AsyncComputeOn()) {
+    if (ComputeMaySkip(sel.infos[0]->pgm_hash)) {
         if (const auto found = compute_pipelines.find(compute_key);
             found != compute_pipelines.end()) {
             NoteUsed(found->second.get());
@@ -959,7 +1162,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         const auto pipeline_hash = std::hash<ComputePipelineKey>{}(compute_key);
         LOG_INFO(Render_Vulkan, "Compiling compute pipeline {:#x}", pipeline_hash);
         BbSceneDiag::Event("compute_requested", compute_key.value, sel.infos[0]->pgm_hash);
-        CompileTimer timer;
+        CompileTimer timer{CompileCompute};
 
         ComputePipeline::SerializationSupport sdata{};
         it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
@@ -1310,19 +1513,28 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
     CompileTimer timer;
 
     const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile);
-    auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
+    std::vector<u32> spv;
+    {
+        ProfilePhase phase{"EmitSPIRV"};
+        spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
+    }
     DumpShader(spv, info.pgm_hash, info.hw_stage, perm_idx, "spv");
 
     vk::ShaderModule module;
 
     auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");
     const bool is_patched = patch && EmulatorSettings.IsPatchShaders();
-    if (is_patched) {
-        LOG_INFO(Loader, "Loaded patch for {} shader {:#x}", info.hw_stage, info.pgm_hash);
-        module = CompileSPV(*patch, instance.GetDevice());
-    } else {
-        module = CompileSPV(spv, instance.GetDevice());
+    {
+        ProfilePhase phase{"CompileSPV (driver module)"};
+        if (is_patched) {
+            LOG_INFO(Loader, "Loaded patch for {} shader {:#x}", info.hw_stage, info.pgm_hash);
+            module = CompileSPV(*patch, instance.GetDevice());
+        } else {
+            module = CompileSPV(spv, instance.GetDevice());
+        }
     }
+    Shader::TranslateProfileDone(info.pgm_hash, u32(info.hw_stage), code.size());
+    LogSpvDigest(info.pgm_hash, spv);
 
     const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
     if (info.sw_stage == SwStage::Vertex)
@@ -1339,14 +1551,86 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
     return module;
 }
 
+// bbport (Claude, 28/10) BB_CACHE_VERIFY=1, diagnosis only: the first time a stored permutation
+// is used, the program is translated again with the live state and the SPIR-V compared word for
+// word with the one in the disk cache. Mismatches name the programs to keep out of the cache
+// (BB_RETRANSLATE). Slow: every permutation is translated once more.
+bool CacheVerifyOn() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_CACHE_VERIFY");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+
+void PipelineCache::VerifyStoredModule(const Program& program, const Program::Module& stored,
+                                       HwStage hw_stage, SwStage sw_stage,
+                                       const Shader::ShaderParams& params,
+                                       const Shader::RuntimeInfo& runtime_info,
+                                       const Shader::Backend::Bindings& binding) {
+    static std::unordered_set<u64> checked;
+    static u32 same = 0, differ = 0, missing = 0;
+    const u64 key = HashCombine(params.hash, u64(std::distance(program.modules.data(), &stored)));
+    if (!checked.insert(key).second) {
+        return;
+    }
+    const auto stored_spv =
+        LoadStoredSpv(program.info.pgm_hash, stored.spec, program.info.srt_info.reader_revision);
+    if (stored_spv.empty()) {
+        ++missing; // translated in this session, nothing on disk to compare
+        return;
+    }
+    Shader::Info fresh_info(hw_stage, sw_stage, params);
+    Shader::RuntimeInfo fresh_runtime = runtime_info;
+    Shader::Backend::Bindings fresh_binding = binding;
+    const auto start = binding;
+    Shader::Pools fresh_pools;
+    const auto ir = Shader::TranslateProgram(params.code, fresh_pools, fresh_info, fresh_runtime, profile);
+    const auto fresh_spv =
+        Shader::Backend::SPIRV::EmitSPIRV(profile, fresh_runtime, ir, fresh_binding);
+    const auto fresh_spec = Shader::StageSpecialization(fresh_info, fresh_runtime, profile, start);
+    const bool spec_same = fresh_spec == stored.spec;
+    if (fresh_spv == stored_spv && spec_same) {
+        ++same;
+    } else {
+        ++differ;
+        size_t first = 0;
+        while (first < fresh_spv.size() && first < stored_spv.size() &&
+               fresh_spv[first] == stored_spv[first]) {
+            ++first;
+        }
+        std::printf("Cache verify: MISMATCH %s %016llx perm %llu: spirv %s (%zu vs %zu words, first "
+                    "difference at %zu), specialization %s\n",
+                    sw_stage == SwStage::Compute    ? "compute"
+                    : sw_stage == SwStage::Fragment ? "fragment"
+                    : sw_stage == SwStage::Vertex   ? "vertex"
+                                                    : "other",
+                    (unsigned long long)program.info.pgm_hash,
+                    (unsigned long long)std::distance(program.modules.data(), &stored),
+                    fresh_spv == stored_spv ? "same" : "DIFFERENT", stored_spv.size(),
+                    fresh_spv.size(), first, spec_same ? "same" : "DIFFERENT");
+    }
+    if ((same + differ) % 100 == 0 || differ <= 50) {
+        std::printf("Cache verify: %u identical, %u mismatched, %u not stored\n", same, differ,
+                    missing);
+    }
+}
+
 PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage hw_stage,
                                                 SwStage sw_stage,
                                                 const Shader::ShaderParams& params,
                                                 Shader::Backend::Bindings& binding) {
     auto runtime_info = BuildRuntimeInfo(sel, hw_stage, sw_stage);
+    if (sw_stage == SwStage::Compute && !sel.worker) {
+        NoteComputeDispatch(params.hash);
+    }
     if (sel.worker) {
         // bbport: draw-preparation worker: look up only, with the worker's own Info copy.
         auto& worker = *sel.worker;
+        if (CacheVerifyOn()) {
+            worker.failed = true;
+            return {};
+        }
         std::shared_lock lk{programs_mutex};
         const auto found_program = program_cache.find(params.hash);
         if (found_program == program_cache.end() || !found_program->second->info_template) {
@@ -1354,6 +1638,22 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
             return {};
         }
         const Program* program = found_program->second.get();
+        // bbport (Claude, 28/10): face shaders are specialized on the GPU thread only. Prepared
+        // ahead by a worker with a program loaded from the disk cache, faces lost their texture
+        // on camera cuts (fine with BB_PREP_WORKERS=0 or the cache off; v0.1.5+).
+        // BB_FACE_WORKERS=1 lets the workers take them again.
+        static const bool face_workers = [] {
+            const char* env = std::getenv("BB_FACE_WORKERS");
+            return env && env[0] == '1';
+        }();
+        static constexpr u64 FaceShaders[] = {0x193274a4, 0x0e4fee1c, 0xf049dbf2, 0x418001f4,
+                                              0xf5c17eec, 0x39e98e7c, 0xdc16510f, 0x02108015,
+                                              0x0a54a188};
+        if (!face_workers &&
+            std::ranges::find(FaceShaders, program->info.pgm_hash) != std::end(FaceShaders)) {
+            worker.failed = true;
+            return {};
+        }
         auto [it_info, new_info] = worker.infos.try_emplace(program, *program->info_template);
         auto& info = it_info->second;
         info.pgm_base = params.Base();
@@ -1386,6 +1686,45 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     }
 
     auto it_pgm = program_cache.find(params.hash); // this thread is the only writer
+    if (it_pgm == program_cache.end() && LoadProgramFromDisk(params.hash)) {
+        it_pgm = program_cache.find(params.hash);
+    }
+    // bbport (Claude, 28/10): a program never seen is not translated on the GPU thread (a burst of
+    // them stalled area entries for hundreds of ms). A compile thread produces its Info; the next
+    // draw then specializes it with the live state and the permutation is translated in the
+    // background like any other. OFF by default (BB_ASYNC_NEW_PROGRAMS=1 to try): translating a
+    // new program reads guest tables that may already be reused off the GPU thread (28/10: an
+    // assertion in ResourcePatchingPass, fragment 37b5a782); it needs a snapshot first.
+    static const bool async_new = [] {
+        const char* env = std::getenv("BB_ASYNC_NEW_PROGRAMS");
+        return env && env[0] == '1';
+    }();
+    if (it_pgm == program_cache.end() && async_new && async_shaders &&
+        ((sw_stage == SwStage::Compute && ComputeMaySkip(params.hash)) ||
+         ((sw_stage == SwStage::Vertex || sw_stage == SwStage::Fragment) &&
+          !sel.regs->stage_enable.hs_en && !synchronous_graphics))) {
+        shader_pending = true;
+        if (pending_new_programs.insert(params.hash).second) {
+            AsyncShaderJob job{};
+            job.diag_ticket = BbSceneDiag::Ticket();
+            BbSceneDiag::Event("shader_requested", job.diag_ticket, params.hash, u32(sw_stage));
+            job.new_program = true;
+            job.hw_stage = hw_stage;
+            job.sw_stage = sw_stage;
+            std::ranges::copy(params.user_data, job.user_data.begin());
+            job.code.assign(params.code.begin(), params.code.end());
+            job.pgm_base = params.Base();
+            job.hash = params.hash;
+            job.runtime_info = runtime_info;
+            job.binding = binding;
+            {
+                std::scoped_lock lock{async_mutex};
+                async_shader_jobs.push_back(std::move(job));
+            }
+            async_cv.notify_one();
+        }
+        return {};
+    }
     if (it_pgm == program_cache.end()) {
         auto new_program = std::make_unique<Program>(hw_stage, sw_stage, params);
         auto start = binding;
@@ -1441,7 +1780,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     // Vertex, pixel and compute programs: tessellation stages read guest constant buffers
     // while translating (ReadTessConstantBuffer).
     if (it == program->modules.end() && async_shaders &&
-        ((sw_stage == SwStage::Compute && AsyncComputeOn()) ||
+        ((sw_stage == SwStage::Compute && ComputeMaySkip(params.hash)) ||
          ((sw_stage == SwStage::Vertex || sw_stage == SwStage::Fragment) &&
           !sel.regs->stage_enable.hs_en && !synchronous_graphics))) {
         // bbport: translated on a compile thread; this draw is skipped (see AsyncShaderJob).
@@ -1484,6 +1823,9 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         std::unique_lock lk{programs_mutex};
         program->AddPermut(module, std::move(spec));
     } else {
+        if (CacheVerifyOn()) {
+            VerifyStoredModule(*program, *it, hw_stage, sw_stage, params, runtime_info, binding);
+        }
         info.AddBindings(binding);
         module = it->module;
         perm_idx = std::distance(program->modules.begin(), it);

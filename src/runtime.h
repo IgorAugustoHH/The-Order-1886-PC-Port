@@ -98,4 +98,10 @@ void runtime_savedata_configure(const char *title);
 uintptr_t runtime_savedata_resolve(const char *name);
 void runtime_savedata_report(void);
 void runtime_thread_attach_host(const char *name);
+void runtime_oodle_index_start(unsigned char *image,const char *app0);
+/* Area prefetch (gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp). */
+int bb_area_index_needed(void);
+void bb_area_package_shader(uint64_t package,uint64_t pgm_hash);
+void bb_area_index_done(void);
+void bb_area_package_opened(uint64_t package);
 #endif

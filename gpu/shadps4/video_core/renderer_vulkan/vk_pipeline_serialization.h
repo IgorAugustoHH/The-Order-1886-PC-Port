@@ -25,5 +25,8 @@ void RegisterShaderBinary(std::vector<u32>&& spv, u64 content_key);
 /// Records which content key an in-session permutation hash stands for (pipelines are stored
 /// with content keys in place of their stage hashes).
 void NotePermutationContent(u64 perm_hash, u64 content_key);
+/// bbport (BB_CACHE_VERIFY): the SPIR-V stored for this specialization, empty when none.
+std::vector<u32> LoadStoredSpv(u64 pgm_hash, const Shader::StageSpecialization& spec,
+                               u32 reader_revision);
 
 } // namespace Vulkan

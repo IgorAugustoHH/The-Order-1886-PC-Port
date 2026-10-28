@@ -13,6 +13,7 @@
 #include <xxhash.h>
 #include "common/hash.h"
 #include "common/path_util.h"
+#include "common/thread.h"
 #include "common/serdes.h"
 #include "core/emulator_settings.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
@@ -123,6 +124,17 @@ void NotePermutationContent(u64 perm_hash, u64 content_key) {
     g_perm_to_content[perm_hash] = content_key;
 }
 
+std::vector<u32> LoadStoredSpv(u64 pgm_hash, const Shader::StageSpecialization& spec,
+                               u32 reader_revision) {
+    std::vector<u32> spv;
+    if (Storage::DataBase::Instance().IsOpened()) {
+        Storage::DataBase::Instance().Load(
+            Storage::BlobType::ShaderBinary,
+            fmt::format("{:#018x}_c", PermutationContentKey(pgm_hash, spec, reader_revision)), spv);
+    }
+    return spv;
+}
+
 u64 RegisterShaderMeta(const Shader::Info& info,
                        const std::optional<Shader::Gcn::FetchShaderData>& fetch_shader_data,
                        const Shader::StageSpecialization& spec, size_t perm_hash,
@@ -132,6 +144,9 @@ u64 RegisterShaderMeta(const Shader::Info& info,
     }
     const u64 content_key = PermutationContentKey(info.pgm_hash, spec, info.srt_info.reader_revision);
     NotePermutationContent(perm_hash, content_key);
+    if (auto* cache = g_area_cache.load()) {
+        cache->NoteStoredProgram(info.pgm_hash, content_key);
+    }
 
     Serialization::Archive ar;
     Serialization::Writer meta{ar};
@@ -344,18 +359,124 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     return is_new;
 }
 
-bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage, u64 content_key,
-                                      u64& local_perm_hash) {
-    auto program = std::make_unique<Program>();
-    Shader::StageSpecialization spec{};
-    spec.info = &program->info;
-    size_t stored_idx{};
-    if (!LoadShaderMeta(ar, program->info, sel.fetch_shader, spec, stored_idx)) {
-        return false;
+void PipelineCache::StartDiskProgramIndex() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_DISK_PROGRAMS");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled || !Storage::DataBase::Instance().IsOpened()) {
+        return;
     }
+    // The index of the previous session: one file, ready before the first frame (reading every
+    // .meta took 95 s on a 15k-entry cache, scanned file by file).
+    {
+        std::vector<u8> saved;
+        Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "program_index", saved);
+        if (saved.size() >= 8 && (saved.size() - 8) % 16 == 0) {
+            u32 version{}, count{};
+            std::memcpy(&version, saved.data(), 4);
+            std::memcpy(&count, saved.data() + 4, 4);
+            if (version == 1 && saved.size() == 8 + size_t(count) * 16) {
+                std::unordered_map<u64, std::vector<u64>> index;
+                for (u32 i = 0; i < count; ++i) {
+                    u64 pair[2];
+                    std::memcpy(pair, saved.data() + 8 + size_t(i) * 16, 16);
+                    index[pair[0]].push_back(pair[1]);
+                }
+                {
+                    std::scoped_lock lock{disk_index_mutex};
+                    disk_programs = std::move(index);
+                }
+                disk_index_ready.store(true, std::memory_order_release);
+                std::printf("Disk programs: %u stored permutations of %zu programs from the saved "
+                            "index\n", count, disk_programs.size());
+            }
+        }
+    }
+    // The full scan (a minute of small reads beside the game's own streaming) only builds the
+    // first index; later sessions add what they store (NoteStoredProgram).
+    const char* rescan = std::getenv("BB_DISK_INDEX_RESCAN");
+    if (disk_index_ready.load() && !(rescan && rescan[0] == '1')) {
+        return;
+    }
+    disk_index_thread = std::jthread([this](std::stop_token stop) {
+        Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
+        const auto begin = std::chrono::steady_clock::now();
+        // Where pgm_hash sits in the raw InfoPersistent bytes that Info::Serialize writes.
+        const Shader::InfoPersistent probe(Shader::HwStage::Vertex, Shader::SwStage::Vertex, 0);
+        const size_t hash_offset = reinterpret_cast<const u8*>(&probe.pgm_hash) -
+                                   reinterpret_cast<const u8*>(&probe);
+        std::unordered_map<u64, std::vector<u64>> index;
+        u32 metas = 0;
+        Storage::DataBase::Instance().ForEachBlobNamed(
+            Storage::BlobType::ShaderMeta, [&](const std::string& name, std::vector<u8>&& data) {
+                if (stop.stop_requested()) {
+                    return;
+                }
+                const u64 content_key = std::strtoull(name.c_str(), nullptr, 16);
+                if (!content_key) {
+                    return;
+                }
+                Serialization::Archive ar{std::move(data)};
+                const u8* const base = ar.CurrPtr();
+                Serialization::Reader meta{ar};
+                u32 meta_version{}, binary_version{};
+                u64 perm_hash{};
+                size_t perm_idx{};
+                meta.Read(meta_version);
+                meta.Read(binary_version);
+                if ((meta_version != Serialization::ShaderMetaVersion && meta_version != 12u) ||
+                    binary_version != Serialization::ShaderBinaryVersion) {
+                    return;
+                }
+                meta.Read(perm_hash);
+                meta.Read(perm_idx);
+                Shader::StageSpecialization spec{};
+                spec.Deserialize(ar);
+                if (ar.SizeBytes() - size_t(ar.CurrPtr() - base) < hash_offset + sizeof(u64)) {
+                    return;
+                }
+                u64 pgm_hash{};
+                std::memcpy(&pgm_hash, ar.CurrPtr() + hash_offset, sizeof(pgm_hash));
+                index[pgm_hash].push_back(content_key);
+                ++metas;
+            });
+        if (stop.stop_requested()) {
+            return;
+        }
+        std::vector<u8> saved(8);
+        const u32 version = 1;
+        std::memcpy(saved.data(), &version, 4);
+        u32 count = 0;
+        for (const auto& [pgm_hash, keys] : index) {
+            for (const u64 key : keys) {
+                const u64 pair[2] = {pgm_hash, key};
+                const auto* bytes = reinterpret_cast<const u8*>(pair);
+                saved.insert(saved.end(), bytes, bytes + 16);
+                ++count;
+            }
+        }
+        std::memcpy(saved.data() + 4, &count, 4);
+        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "program_index",
+                                           std::move(saved));
+        {
+            std::scoped_lock lock{disk_index_mutex};
+            disk_programs = std::move(index);
+        }
+        disk_index_ready.store(true, std::memory_order_release);
+        std::printf("Disk programs: %u stored permutations of %zu programs indexed in %.0f ms (saved)\n",
+                    metas, disk_programs.size(),
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                              begin).count());
+    });
+}
 
-    // bbport: BB_RETRANSLATE=hash,hash (hex): those programs are not loaded from the cache, so
-    // the session translates (and with BB_DUMP_ONLY dumps) them again.
+// bbport: programs never taken from the disk cache, always translated in the session.
+// The face shaders: a stored module came back unfit after camera cuts (face lost its texture;
+// fine with the cache off). Not the cause (draw workers were); BB_FACE_FROM_CACHE=0 keeps them out.
+// BB_RETRANSLATE=hash,hash (hex) adds more; those programs are translated (and with BB_DUMP_ONLY
+// dumped) again.
+static bool NeverFromCache(u64 pgm_hash) {
     static const std::vector<u64> retranslate = [] {
         std::vector<u64> list;
         if (const char* env = std::getenv("BB_RETRANSLATE")) {
@@ -372,7 +493,348 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage, 
         }
         return list;
     }();
-    if (std::ranges::find(retranslate, program->info.pgm_hash) != retranslate.end()) {
+    static const bool face_from_cache = [] {
+        const char* env = std::getenv("BB_FACE_FROM_CACHE");
+        return !(env && env[0] == '0');
+    }();
+    static constexpr u64 FaceShaders[] = {0xf5c17eec, 0x193274a4, 0x0e4fee1c, 0x39e98e7c, 0xdc16510f};
+    if (!face_from_cache && std::ranges::find(FaceShaders, pgm_hash) != std::end(FaceShaders)) {
+        return true;
+    }
+    return std::ranges::find(retranslate, pgm_hash) != retranslate.end();
+}
+
+std::unique_ptr<Program> PipelineCache::PrepareProgramFromDisk(u64 pgm_hash) {
+    if (NeverFromCache(pgm_hash)) {
+        return {};
+    }
+    if (!disk_index_ready.load(std::memory_order_acquire)) {
+        return {};
+    }
+    std::vector<u64> keys;
+    {
+        std::scoped_lock lock{disk_index_mutex};
+        const auto it = disk_programs.find(pgm_hash);
+        if (it == disk_programs.end()) {
+            return {};
+        }
+        keys = it->second;
+    }
+    std::unique_ptr<Program> program;
+    for (const u64 content_key : keys) {
+        if (program && program->modules.size() >= Program::MaxPermutations) {
+            break;
+        }
+        std::vector<u8> meta_blob;
+        Storage::DataBase::Instance().Load(Storage::BlobType::ShaderMeta,
+                                           fmt::format("{:#018x}", content_key), meta_blob);
+        std::vector<u32> spv;
+        Storage::DataBase::Instance().Load(Storage::BlobType::ShaderBinary,
+                                           fmt::format("{:#018x}_c", content_key), spv);
+        if (meta_blob.empty() || spv.empty()) {
+            continue;
+        }
+        auto loaded = std::make_unique<Program>();
+        Shader::StageSpecialization spec{};
+        spec.info = &loaded->info;
+        std::optional<Shader::Gcn::FetchShaderData> fetch;
+        size_t stored_idx{};
+        Serialization::Archive ar{std::move(meta_blob)};
+        if (!LoadShaderMeta(ar, loaded->info, fetch, spec, stored_idx) ||
+            loaded->info.pgm_hash != pgm_hash) {
+            continue;
+        }
+        // As LoadPipelineStage: binaries of the old float atomic min/max fallback are not reused.
+        bool umax = false, smin = false, umin = false, smax = false;
+        for (size_t i = 5; i < spv.size();) {
+            const u32 count = spv[i] >> 16, opcode = spv[i] & 0xffff;
+            umax |= opcode == 239;
+            smin |= opcode == 236;
+            umin |= opcode == 237;
+            smax |= opcode == 238;
+            i += count ? count : 1;
+        }
+        if ((umax && smin) || (umin && smax)) {
+            continue;
+        }
+        if (!program) {
+            program = std::move(loaded);
+        }
+        spec.info = &program->info;
+        const vk::ShaderModule module = CompileSPV(spv, instance.GetDevice());
+        if (program->info.sw_stage == Shader::SwStage::Vertex) {
+            BbFaceDepth::Register(module, spv, pgm_hash);
+        }
+        NotePermutationContent(HashCombine(pgm_hash, program->modules.size()), content_key);
+        program->AddPermut(module, std::move(spec));
+    }
+    if (!program || program->modules.empty()) {
+        return {};
+    }
+    if (!program || program->modules.empty()) {
+        return {};
+    }
+    program->info_template = std::make_unique<Shader::Info>(program->info);
+    return program;
+}
+
+bool PipelineCache::LoadProgramFromDisk(u64 pgm_hash) {
+    std::unique_ptr<Program> program;
+    double lead_ms = -1.0;
+    {
+        std::scoped_lock lock{area_mutex};
+        const auto it = prepared_programs.find(pgm_hash);
+        if (it != prepared_programs.end()) {
+            program = std::move(it->second.program);
+            lead_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                it->second.ready_at).count();
+            prepared_programs.erase(it);
+        }
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    if (!program) {
+        program = PrepareProgramFromDisk(pgm_hash);
+    }
+    if (!program) {
+        return false;
+    }
+    const size_t permutations = program->modules.size();
+    {
+        std::unique_lock lk{programs_mutex};
+        program_cache.emplace(pgm_hash, std::move(program));
+    }
+    static u32 logged = 0;
+    if (logged++ < 300) {
+        if (lead_ms >= 0) {
+            std::printf("Disk program ready: %016llx, %zu permutations, prepared %.0f ms before use\n",
+                        (unsigned long long)pgm_hash, permutations, lead_ms);
+        } else {
+            std::printf("Disk program loaded: %016llx, %zu permutations, %.2f ms\n",
+                        (unsigned long long)pgm_hash, permutations,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                  begin).count());
+        }
+    }
+    return true;
+}
+
+void PipelineCache::NoteStoredProgram(u64 pgm_hash, u64 content_key) {
+    if (!disk_index_ready.load(std::memory_order_acquire)) {
+        return;
+    }
+    std::scoped_lock lock{disk_index_mutex};
+    auto& keys = disk_programs[pgm_hash];
+    if (std::ranges::find(keys, content_key) == keys.end()) {
+        keys.push_back(content_key);
+        disk_index_dirty = true;
+    }
+}
+
+void PipelineCache::SaveDiskIndex() {
+    std::vector<u8> saved(8);
+    u32 count = 0;
+    {
+        std::scoped_lock lock{disk_index_mutex};
+        if (!disk_index_dirty) {
+            return;
+        }
+        disk_index_dirty = false;
+        for (const auto& [pgm_hash, keys] : disk_programs) {
+            for (const u64 key : keys) {
+                const u64 pair[2] = {pgm_hash, key};
+                const auto* bytes = reinterpret_cast<const u8*>(pair);
+                saved.insert(saved.end(), bytes, bytes + 16);
+                ++count;
+            }
+        }
+    }
+    const u32 version = 1;
+    std::memcpy(saved.data(), &version, 4);
+    std::memcpy(saved.data() + 4, &count, 4);
+    Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "program_index",
+                                       std::move(saved));
+}
+
+void PipelineCache::StartAreaPrefetch() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_AREA_PREFETCH");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled || !Storage::DataBase::Instance().IsOpened()) {
+        std::scoped_lock lock{area_mutex};
+        area_index_state = 0; // nothing to build
+        return;
+    }
+    std::vector<u8> saved;
+    Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "package_index", saved);
+    {
+        std::scoped_lock lock{area_mutex};
+        u32 version{}, count{};
+        if (saved.size() >= 8) {
+            std::memcpy(&version, saved.data(), 4);
+            std::memcpy(&count, saved.data() + 4, 4);
+        }
+        if (version == 1 && saved.size() == 8 + size_t(count) * 16) {
+            for (u32 i = 0; i < count; ++i) {
+                u64 pair[2];
+                std::memcpy(pair, saved.data() + 8 + size_t(i) * 16, 16);
+                package_shaders[pair[0]].push_back(pair[1]);
+            }
+            area_index_state = 0;
+            std::printf("Area prefetch: %zu packages, %u shader entries from the saved index\n",
+                        package_shaders.size(), count);
+        } else {
+            area_index_state = 1;
+            std::printf("Area prefetch: no package index yet; it is built in the background\n");
+        }
+    }
+    area_thread = std::jthread([this](std::stop_token stop) { AreaPrefetchLoop(stop); });
+}
+
+int PipelineCache::AreaIndexNeeded() {
+    std::scoped_lock lock{area_mutex};
+    return area_index_state;
+}
+
+void PipelineCache::AreaPackageShader(u64 package, u64 pgm_hash) {
+    std::scoped_lock lock{area_mutex};
+    auto& list = package_building[package];
+    if (std::ranges::find(list, pgm_hash) == list.end()) {
+        list.push_back(pgm_hash);
+    }
+}
+
+void PipelineCache::AreaIndexDone() {
+    std::vector<u8> saved(8);
+    u32 count = 0;
+    {
+        std::scoped_lock lock{area_mutex};
+        for (const auto& [package, hashes] : package_building) {
+            for (const u64 hash : hashes) {
+                const u64 pair[2] = {package, hash};
+                const auto* bytes = reinterpret_cast<const u8*>(pair);
+                saved.insert(saved.end(), bytes, bytes + 16);
+                ++count;
+            }
+        }
+        package_shaders = std::move(package_building);
+        package_building.clear();
+        area_index_state = 0;
+    }
+    const u32 version = 1;
+    std::memcpy(saved.data(), &version, 4);
+    std::memcpy(saved.data() + 4, &count, 4);
+    Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "package_index",
+                                       std::move(saved));
+    std::printf("Area prefetch: package index built, %u shader entries (saved)\n", count);
+}
+
+void PipelineCache::AreaPackageOpened(u64 package) {
+    {
+        std::scoped_lock lock{area_mutex};
+        if (!package_shaders.contains(package)) {
+            static u32 logged = 0;
+            if (logged++ < 20) {
+                std::printf("Area prefetch: package %016llx read, no shaders in the index%c",
+                            (unsigned long long)package, 10);
+            }
+            return;
+        }
+        if (std::ranges::find(opened_packages, package) == opened_packages.end()) {
+            opened_packages.push_back(package);
+        }
+    }
+    area_cv.notify_one();
+}
+
+void PipelineCache::AreaPrefetchLoop(std::stop_token stop) {
+    Common::SetCurrentThreadName("bb:AreaPrefetch");
+    Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
+    // Prepared programs nobody used yet are capped (their modules hold driver memory).
+    constexpr size_t MaxPrepared = 3000;
+    for (;;) {
+        u64 package{};
+        std::vector<u64> hashes;
+        {
+            std::unique_lock lock{area_mutex};
+            if (!area_cv.wait_for(lock, stop, std::chrono::seconds(60),
+                                  [&] { return !opened_packages.empty(); })) {
+                if (stop.stop_requested()) {
+                    return;
+                }
+                lock.unlock();
+                SaveDiskIndex();
+                continue;
+            }
+            package = opened_packages.front();
+            opened_packages.pop_front();
+            hashes = package_shaders[package];
+        }
+        if (!disk_index_ready.load(std::memory_order_acquire)) {
+            continue;
+        }
+        const auto begin = std::chrono::steady_clock::now();
+        u32 prepared = 0, known = 0;
+        for (const u64 hash : hashes) {
+            if (stop.stop_requested()) {
+                return;
+            }
+            {
+                std::shared_lock lk{programs_mutex};
+                if (program_cache.count(hash)) {
+                    ++known;
+                    continue;
+                }
+            }
+            {
+                std::scoped_lock lock{area_mutex};
+                if (prepared_programs.contains(hash)) {
+                    ++known;
+                    continue;
+                }
+            }
+            auto program = PrepareProgramFromDisk(hash);
+            if (!program) {
+                continue;
+            }
+            std::scoped_lock lock{area_mutex};
+            prepared_programs.emplace(hash,
+                                      PreparedProgram{std::move(program), std::chrono::steady_clock::now()});
+            prepared_order.push_back(hash);
+            ++prepared;
+            while (prepared_order.size() > MaxPrepared) {
+                const auto it = prepared_programs.find(prepared_order.front());
+                if (it != prepared_programs.end() && it->second.program) {
+                    for (auto& module : it->second.program->modules) {
+                        instance.GetDevice().destroyShaderModule(module.module);
+                    }
+                    prepared_programs.erase(it);
+                }
+                prepared_order.pop_front();
+            }
+        }
+        static u32 logged = 0;
+        if (logged++ < 200) {
+            std::printf("Area prefetch: package %016llx, %zu shaders (%u already loaded), %u prepared "
+                        "in %.0f ms\n",
+                        (unsigned long long)package, hashes.size(), known, prepared,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                  begin).count());
+        }
+    }
+}
+
+bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage, u64 content_key,
+                                      u64& local_perm_hash) {
+    auto program = std::make_unique<Program>();
+    Shader::StageSpecialization spec{};
+    spec.info = &program->info;
+    size_t stored_idx{};
+    if (!LoadShaderMeta(ar, program->info, sel.fetch_shader, spec, stored_idx)) {
+        return false;
+    }
+
+    if (NeverFromCache(program->info.pgm_hash)) {
         return false;
     }
 
