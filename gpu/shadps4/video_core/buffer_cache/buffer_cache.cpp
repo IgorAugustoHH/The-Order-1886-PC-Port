@@ -266,8 +266,12 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         if (is_write) {
             const bool on_gpu = gpu_modified_ranges.Intersects(device_addr, size);
             Readbacks().NoteOverlap(on_gpu);
+            // Registered pages: the newest completed copy, else the synchronized path below.
+            const bool sun_page = SynchronizedPage(device_addr, size);
+            const bool sun_ready = sun_page && DeliverSunCopies();
             if (!on_gpu && deferred_readbacks_enabled &&
                 !BbToggle::Disabled(BbToggle::DeferredReadbacks) &&
+                (!sun_page || sun_ready) &&
                 DeferReadback(arena, window_start, window_end - window_start)) {
                 memory_tracker->MarkRegionAsCpuModified(device_addr, size);
                 return;
@@ -288,6 +292,91 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     } else {
         liverpool->SendCommand<true, true>(std::move(flush_request));
     }
+}
+
+void BufferCache::KeepPageSynchronized(VAddr device_addr, u64 size, u64 pgm_hash) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_SUN_READBACK_SYNC");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled || device_addr == 0 || size == 0) {
+        return;
+    }
+    std::scoped_lock lock{synchronized_mutex};
+    if (synchronized_ranges.Intersects(device_addr, size)) {
+        return;
+    }
+    synchronized_ranges.Add(device_addr, size);
+    static u32 logged = 0;
+    if (logged++ < 32) {
+        std::printf("Readback sync: %#llx size %llu (shader %016llx)\n",
+                    static_cast<unsigned long long>(device_addr), static_cast<unsigned long long>(size),
+                    static_cast<unsigned long long>(pgm_hash));
+    }
+}
+
+void BufferCache::RecordSunCopies() {
+    std::scoped_lock lock{synchronized_mutex};
+    std::vector<std::pair<VAddr, VAddr>> ranges;
+    synchronized_ranges.ForEach([&](VAddr start, VAddr end) { ranges.emplace_back(start, end); });
+    if (ranges.empty()) {
+        return;
+    }
+    u64 total = 0;
+    for (const auto& [start, end] : ranges) {
+        total += Common::AlignUp(end - start, 16);
+    }
+    SunBatch batch{};
+    batch.staging = staging_pool.Request(total, MemoryType::HostCached, 0, true);
+    u64 offset = 0;
+    for (const auto& [start, end] : ranges) {
+        const u64 size = end - start;
+        const auto* arena = GetArena(start >> block_shift, (end - 1) >> block_shift);
+        runtime.CopyBuffer(arena, batch.staging.buffer,
+                           std::array{vk::BufferCopy{start - arena->cpu_addr,
+                                                     batch.staging.offset + offset, size}});
+        batch.items.push_back({start, size, offset});
+        offset += Common::AlignUp(size, 16);
+    }
+    batch.tick = scheduler.CurrentTick();
+    sun_batches.push_back(std::move(batch));
+    // Completed batches older than the newest completed one are no longer needed.
+    while (sun_batches.size() > 1 && scheduler.IsFree(sun_batches[1].tick)) {
+        staging_pool.FreeDeferred(sun_batches.front().staging);
+        sun_batches.pop_front();
+    }
+    // A stalled GPU must not grow the queue without limit.
+    while (sun_batches.size() > 16) {
+        staging_pool.FreeDeferred(sun_batches.front().staging);
+        sun_batches.pop_front();
+    }
+}
+
+bool BufferCache::DeliverSunCopies() {
+    std::scoped_lock lock{synchronized_mutex};
+    const SunBatch* newest = nullptr;
+    for (const auto& batch : sun_batches) {
+        if (scheduler.IsFree(batch.tick)) {
+            newest = &batch;
+        }
+    }
+    if (!newest) {
+        return false;
+    }
+    newest->staging.buffer->Invalidate(newest->staging.offset, newest->staging.size);
+    for (const auto& item : newest->items) {
+        memory->TryWriteBacking(reinterpret_cast<void*>(item.addr),
+                                newest->staging.mapped + item.staging_offset, item.size);
+    }
+    return true;
+}
+
+// The 4 KiB pages of a CPU write fault, against the registered ranges.
+bool BufferCache::SynchronizedPage(VAddr addr, u64 size) {
+    const VAddr start = Common::AlignDown(addr, 4_KB);
+    const VAddr end = Common::AlignUp(addr + size, 4_KB);
+    std::scoped_lock lock{synchronized_mutex};
+    return synchronized_ranges.Intersects(start, end - start);
 }
 
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {

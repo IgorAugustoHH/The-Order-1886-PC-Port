@@ -99,6 +99,12 @@ public:
     /// Validates the rendered scalar source of the focus-copy pass, never arbitrary images.
     bool IsFocusCopySource(VAddr device_addr, u32 size);
 
+    /// bbport: CPU writes to the pages of these ranges are not deferred (BB_SUN_READBACK_SYNC=0: off).
+    void KeepPageSynchronized(VAddr device_addr, u64 size, u64 pgm_hash);
+    /// Copies the registered ranges to host memory; a CPU write to their pages gets the newest
+    /// completed copy.
+    void RecordSunCopies();
+
     /// Finds a buffer for the specified region.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBuffer(VAddr device_addr, u32 size,
                                                              bool is_written,
@@ -239,6 +245,21 @@ private:
     RangeSet pending_readbacks; ///< GPU bytes of deferred_readbacks (guarded by deferred_mutex)
     std::atomic<bool> has_pending_readbacks{false};
     bool deferred_readbacks_enabled = true; ///< BB_DEFERRED_READBACK=0 turns it off
+    bool SynchronizedPage(VAddr addr, u64 size);
+    std::mutex synchronized_mutex;
+    RangeSet synchronized_ranges; ///< see KeepPageSynchronized (guarded by synchronized_mutex)
+    bool DeliverSunCopies();
+    struct SunCopy {
+        VAddr addr;
+        u64 size;
+        u64 staging_offset;
+    };
+    struct SunBatch {
+        u64 tick{};
+        Vulkan::StagingBufferRef staging{};
+        std::vector<SunCopy> items;
+    };
+    std::deque<SunBatch> sun_batches; ///< oldest first (guarded by synchronized_mutex)
     bool early_writeback = false; ///< BB_EARLY_WRITEBACK=1 (no gain measured in run75)
     bool focus_sync_enabled = false; ///< opt-in narrow scalar-copy path
     struct FocusLatency {

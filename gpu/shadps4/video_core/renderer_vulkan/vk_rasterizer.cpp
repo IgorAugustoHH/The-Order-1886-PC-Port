@@ -1852,6 +1852,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     ResetBindings(true);
     // ResetBindings first marks the compute write, so CopyBuffer inserts its transfer barrier.
     if (focus_feedback) buffer_cache.RecordFocusWritebacks();
+    if (cs.pgm_hash == 0x7b1b18c9) buffer_cache.RecordSunCopies();
     scheduler.KickRecording();
 }
 
@@ -2835,6 +2836,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
         } else {
             const auto vsharp =
                 prepared ? prepared->buffer_sharps[buffer_index] : desc.GetSharp(stage);
+            // bbport: see KeepPageSynchronized.
+            if (desc.is_written &&
+                (stage.uses_buffer_atomic_float_min_max || stage.pgm_hash == 0x7550d841 ||
+                 stage.pgm_hash == 0x7b1b18c9)) {
+                buffer_cache.KeepPageSynchronized(vsharp.base_address, vsharp.GetSize(), stage.pgm_hash);
+            }
             if (vsharp.GetSize() == 864 && gbuffer_draw &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));
