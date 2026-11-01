@@ -14,9 +14,15 @@ O jogo roda direto no processador do PC, sem emulação de CPU. Só o que muda e
 as funções do sistema da Sony e a GPU, cujos comandos e shaders viram Vulkan. Sem janela de emulador,
 sem scripts de configuração: você aponta a pasta do seu jogo e clica em JOGAR.
 
-**Versão atual: [v0.1.6](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/tag/v0.1.6) (pré-lançamento)** ·
+**Versão atual: [v0.1.7](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/tag/v0.1.7) (pré-lançamento)** ·
 **[⬇ Baixar a versão mais recente](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases/latest)** ·
 **⭐ Gostou? Deixe uma estrela no topo da página, isso ajuda o projeto a ser encontrado.**
+
+## v0.1.7: atualização de Halloween / Halloween update
+[![TOport v0.1.7 no YouTube / TOport v0.1.7 on YouTube](https://img.youtube.com/vi/HUpJmWgzhnk/maxresdefault.jpg)](https://www.youtube.com/watch?v=HUpJmWgzhnk)
+
+*Iluminação global corrigida, áudio melhorado e mouse estilo shooter. Clique para assistir no YouTube. /
+Global illumination fixed, improved audio and shooter-style mouse. Click to watch on YouTube.*
 
 ## Performance numa RTX 5090 / Performance on an RTX 5090
 ![TOport a 120 FPS numa RTX 5090 / TOport at 120 FPS on an RTX 5090](docs/screenshots/rtx5090/benchmark-telhado.jpg)
@@ -47,8 +53,38 @@ RTX 5090 at ~50% load.*
 - **Menu dentro do jogo** com **Insert** (teclado): troque DLSS, resolução,
   limite de quadros e idioma sem sair do jogo.
 - **Câmera livre nas cutscenes** (modo foto).
-- Controle de PlayStation, Xbox ou **teclado e mouse** (WASD andar, mouse câmera, botão direito mirar,
-  botão esquerdo atirar), que funcionam junto com o controle.
+- Controle de PlayStation, Xbox ou **teclado e mouse** no estilo shooter, que funcionam junto com o
+  controle (veja [Controles](#controles--controls)).
+
+## Controles / Controls
+O teclado e o mouse imitam os botões do controle de PS4, então os ícones na tela são os do controle. /
+Keyboard and mouse act as PS4 pad buttons, so on-screen prompts show the pad icons.
+
+| Controle PS4 / PS4 pad | Teclado e mouse / Keyboard & mouse |
+|---|---|
+| Analógico esquerdo (andar) / Left stick (move) | **W A S D** |
+| Analógico direito (câmera) / Right stick (camera) | **Mouse** ou / or **setas / arrow keys** |
+| L2 (mirar / aim) | **Botão direito / Right click** |
+| R2 (atirar / shoot) | **Botão esquerdo / Left click** |
+| L3 (correr / sprint) | **Shift esquerdo / Left Shift** |
+| ✕ | **Espaço / Space** ou / or **E** |
+| ◯ | **Ctrl esquerdo / Left Ctrl** ou / or **C** |
+| ▢ | **R** |
+| △ | **Q**, **1** ou / or **2** |
+| L1 | **4** ou / or **botão lateral de trás / mouse back button** |
+| R1 | **G** ou / or **botão lateral da frente / mouse forward button** |
+| R3 | **V** ou / or **botão do meio / middle click** |
+| Direcional / D-pad ↑ ↓ ← → | **I K J L** |
+| Touchpad (esquerda / direita) / Touchpad (left / right) | **Tab** / **Backspace** |
+| Options (pausa / pause) | **Esc** ou / or **Enter** |
+
+**Atalhos do TOport / TOport hotkeys:** **Insert** abre o menu do TOport (DLSS, resolução, limite de
+quadros e idioma) · **F9** alterna o limite de 30/60/90/120 FPS. / **Insert** opens the TOport menu
+(DLSS, resolution, frame limit and language) · **F9** cycles the 30/60/90/120 FPS limit.
+
+*Na câmera livre o mouse gira conforme a distância que você move, com um pequeno limiar para começar e
+inverter o giro; mirando, a resposta é direta. / Free-look turns by how far you move the mouse, with a small
+start/reverse threshold; while aiming, the response is direct.*
 
 ## Desempenho / Performance
 | PC | Configuração / Settings | Resultado / Result |
