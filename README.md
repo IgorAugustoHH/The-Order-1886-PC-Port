@@ -114,6 +114,10 @@ Made a video or review of TOport? Tell us on Discord or in an issue and we'll ad
   01.02 (CUSA00076 europeia, CUSA00035, CUSA00070, CUSA00100, CUSA00670): experimental.
 - Windows 10 ou 11, 64 bits.
 - GPU com Vulkan 1.3 e 6 GB de VRAM. DLSS exige NVIDIA RTX.
+- **NVIDIA GTX 16 ou mais nova** (GTX 1650/1660, RTX). A série **GTX 10 (1050/1060/1070/1080) ainda
+  não é suportada**: a cena aparece como silhuetas pretas ([#28](https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/issues/28)).
+  / **NVIDIA GTX 16 or newer** (GTX 1650/1660, RTX). **GTX 10 cards (1050/1060/1070/1080) are not
+  supported yet**: the scene renders as black silhouettes (#28).
 - 16 GB de RAM e CPU de 6 núcleos.
 - **Arquivo de paginação do Windows num SSD/NVMe.** Num HD mecânico o jogo engasga quando a RAM aperta.
 
