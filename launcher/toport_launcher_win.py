@@ -39,7 +39,7 @@ TITLE_ID = 'CUSA00785'
 # GoldHEN patches use one set of addresses for all of them; accepted as experimental.
 EXPERIMENTAL_IDS = ('CUSA00035', 'CUSA00070', 'CUSA00076', 'CUSA00100', 'CUSA00670')
 GAME_VERSION = '01.02'
-VERSION = '0.1.6'
+VERSION = '0.1.7'
 # Releases (pre-releases included): the launcher offers a newer one on its sidebar.
 RELEASES_API = 'https://api.github.com/repos/IgorAugustoHH/The-Order-1886-PC-Port/releases?per_page=5'
 RELEASES_PAGE = 'https://github.com/IgorAugustoHH/The-Order-1886-PC-Port/releases'
@@ -185,7 +185,7 @@ INI_DEFAULTS = {'order_aa': 'quality', 'order_resolution': 'retail', 'order_aspe
                 'preload_shaders': '1', 'order_output': '1080', 'order_upscaler': 'dlss',
                 'sharpness': '0.30'}
 INI_FLAGS = ('photo_camera', 'motion_blur', 'dof', 'fast_loading', 'show_fps', 'preload_shaders')
-APP_DEFAULTS = {'game_dir': str(PORT_DIR.parent / TITLE_ID), 'display': '1',
+APP_DEFAULTS = {'improved_audio': True, 'game_dir': str(PORT_DIR.parent / TITLE_ID), 'display': '1',
                 'close_on_play': False, 'ui_language': UI_LANG}
 
 
@@ -294,6 +294,7 @@ def game_environment(launcher):
     env['BB_DATA_DIR'] = str(DATA_DIR)
     env['BB_CONFIG'] = str(CONFIG)
     env.setdefault('BB_FULLSCREEN', launcher.get('display', '1'))
+    env.setdefault('BB_AUDIO_STEREO', '' if launcher.get('improved_audio', True) else '0')
     return env
 
 
@@ -830,17 +831,14 @@ class Launcher:
                    '1080p. Também há um controle deslizante no menu do jogo (Insert), que vale na hora.',
                    'Sharpening applied after the upscaler (DLSS or FSR 3.1) when the output is above '
                    '1080p. The in-game menu (Insert) has a slider too, applied immediately.'))
-        self.section(f, T('Efeitos', 'Effects'))
-        self.check(f, 'motion_blur', 'ini', T('Desfoque de movimento (motion blur)', 'Motion blur'),
-                   T('O borrão do jogo em personagens e câmera em movimento. Também pode ser trocado '
-                     'no menu do jogo (Insert), sem reiniciar.',
-                     "The game's blur on moving characters and camera. Can also be switched in the "
-                     'in-game menu (Insert) without restarting.'))
-        self.check(f, 'dof', 'ini', T('Profundidade de campo (DoF)', 'Depth of field'),
-                   T('O desfoque do que está fora de foco (fundo, mira, cutscenes). Também pode ser '
-                     'trocado no menu do jogo (Insert), sem reiniciar.',
-                     'The blur of what is out of focus (background, aiming, cutscenes). Can also be '
-                     'switched in the in-game menu (Insert) without restarting.'))
+        self.section(f, T('Áudio', 'Audio'))
+        self.check(f, 'improved_audio', 'app', T('Áudio melhorado (estéreo)', 'Improved audio (stereo)'),
+                   T('O jogo sai em 7.1. Em fones e caixas estéreo, o port faz a mistura para dois canais '
+                     'com as vozes e a música no volume certo, em vez da mistura padrão do Windows que '
+                     'deixa tudo baixo. Em sistemas 7.1 de verdade nada muda.',
+                     'The game outputs 7.1. On stereo headphones and speakers the port mixes it to two '
+                     'channels with voices and music at the right level, instead of the default mix that '
+                     'leaves everything quiet. Real 7.1 systems are unchanged.'))
 
     def build_display(self):
         f = self.page('display', T('Tela e desempenho', 'Display & performance'),

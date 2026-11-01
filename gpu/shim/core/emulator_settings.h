@@ -37,7 +37,9 @@ public:
     u32 GetVblankFrequency() {
         static const u32 value = [] {
             const long hz = Number("BB_VBLANK_HZ", 60);
-            return hz > 0 ? u32(hz) : 480u;
+            // Benchmark cheat (BB_TIMESCALE): vblank and frame limit follow the faster clock.
+            const double scale = std::clamp(Number("BB_TIMESCALE", 1), 1L, 8L);
+            return u32((hz > 0 ? u32(hz) : 480u) * scale);
         }();
         return value;
     }
@@ -45,8 +47,9 @@ public:
     u32 GetFrameLimit() {
         static const u32 value = [] {
             const long limit = Number("BB_FPS_LIMIT", -1);
-            if (limit >= 0) return u32(limit);
-            return Number("BB_VBLANK_HZ", 60) > 0 ? 0u : std::min<u32>(BbDisplayRefreshHz(), 120);
+            const u32 scale = u32(std::clamp(Number("BB_TIMESCALE", 1), 1L, 8L));
+            if (limit >= 0) return u32(limit) * scale;
+            return Number("BB_VBLANK_HZ", 60) > 0 ? 0u : std::min<u32>(BbDisplayRefreshHz(), 120) * scale;
         }();
         return value;
     }

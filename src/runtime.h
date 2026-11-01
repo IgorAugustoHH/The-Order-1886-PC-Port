@@ -104,4 +104,7 @@ int bb_area_index_needed(void);
 void bb_area_package_shader(uint64_t package,uint64_t pgm_hash);
 void bb_area_index_done(void);
 void bb_area_package_opened(uint64_t package);
+/* Benchmark cheat: BB_TIMESCALE=<1..8> runs the guest's clocks, sleeps, vblank and audio
+   faster (cutscenes cannot be skipped in The Order: 1886). 1 = normal. */
+double runtime_timescale(void);
 #endif

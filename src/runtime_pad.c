@@ -4,12 +4,13 @@
  *
  * Keyboard and mouse layout:
  *   WASD left stick, mouse (or arrow keys) right stick / camera,
- *   left mouse button R2, right mouse button L2, middle button R3,
- *   Space Cross, LShift Circle, E Square, Q Triangle, 1 L1, 3 R1, R L2, F R2, Z L3, C R3,
+ *   left mouse button R2, right mouse button L2, middle button R3, side buttons L1 / R1,
+ *   shooter style (like Call of Duty): Space or E Cross, LCtrl or C Circle, LShift L3 (sprint),
+ *   R Square, V R3, Q or 1 or 2 Triangle, G R1, 4 L1,
  *   Enter or Esc Options, Tab left touchpad, Backspace right touchpad,
  *   IJKL d-pad (I up, K down, J left, L right).
  *   BB_MOUSE=0 leaves the mouse alone; BB_MOUSE_SENS (default 6) scales the camera while
- *   aiming; without aiming the mouse turns it like the arrow keys (BB_MOUSE_LOOK_MIN, 1 px). */
+ *   aiming; without aiming each pixel buys BB_MOUSE_LOOK_GAIN ms of full stick (default 2). */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
@@ -101,23 +102,51 @@ static float env_float(const char *name, float fallback) {
     const char *e=getenv(name);
     return e && *e ? (float)atof(e) : fallback;
 }
-/* Mouse motion as a right stick deflection: the camera turns while the mouse moves. Aiming
- * (right button or L2) scales the motion (BB_MOUSE_SENS), which played well. The free camera
- * works like the arrow keys instead: motion past BB_MOUSE_LOOK_MIN pixels pushes the stick all
- * the way in its direction, since smaller deflections turned it stiffly. */
-static uint8_t mouse_axis(uint8_t current, float delta, int aiming) {
-    static float sens=-1.0f, look_min=-1.0f;
-    if (sens<0) {
-        sens=env_float("BB_MOUSE_SENS",6.0f);
-        look_min=env_float("BB_MOUSE_LOOK_MIN",1.0f);
-    }
+/* Mouse motion as a right stick deflection. Aiming (right button or L2) scales the motion
+ * (BB_MOUSE_SENS), which played well. The free camera turns at most at the stick's full speed,
+ * so a fast flick that lasted one sample used to turn it only a little: here each pixel buys
+ * BB_MOUSE_LOOK_GAIN milliseconds of full deflection, spent over the next samples, so the turn
+ * follows how far the mouse moved. The debt is capped (BB_MOUSE_LOOK_MAX ms) to avoid drifting
+ * on after the hand stopped. Starting a turn, or turning back, first needs BB_MOUSE_LOOK_START
+ * pixels the same way within a short while, so a hand settling or slipping back does not move
+ * the camera the other way. */
+static uint8_t mouse_axis(uint8_t current, float delta, float sens) {
     if (delta==0.0f) return current;
-    if (!aiming) {
-        if (delta>=look_min) return 255;
-        if (delta<=-look_min) return 0;
-        return current;
-    }
     float v=(float)current-128.0f+delta*sens;
+    if (v>127.0f) v=127.0f;
+    if (v<-128.0f) v=-128.0f;
+    return (uint8_t)(int)(v+128.0f);
+}
+typedef struct { float debt, start, idle; } MouseLook;
+static uint8_t mouse_look(uint8_t current, MouseLook *m, float delta, float dt) {
+    static float gain=-1.0f, cap, start_px;
+    if (gain<0) {
+        gain=env_float("BB_MOUSE_LOOK_GAIN",2.0f)/1000.0f;
+        cap=env_float("BB_MOUSE_LOOK_MAX",250.0f)/1000.0f;
+        start_px=env_float("BB_MOUSE_LOOK_START",6.0f);
+    }
+    float *debt=&m->debt;
+    if (delta==0.0f) {
+        m->idle+=dt;
+        if (m->idle>0.15f) m->start=0; /* a pause forgets a half-started turn */
+    } else {
+        m->idle=0;
+        const int fresh=*debt==0.0f || delta*(*debt)<0; /* at rest, or going back */
+        if (fresh) {
+            if (delta*m->start<0) m->start=0;
+            m->start+=delta;
+            if (m->start<start_px && m->start>-start_px) delta=0;
+            else { *debt=0; delta=m->start; m->start=0; }
+        } else m->start=0;
+    }
+    *debt+=delta*gain;
+    if (*debt>cap) *debt=cap;
+    if (*debt<-cap) *debt=-cap;
+    if (*debt==0.0f) return current;
+    const float spend=*debt>0 ? (*debt<dt ? *debt : dt) : (*debt>-dt ? *debt : -dt);
+    *debt-=spend;
+    const float push=dt>0 ? spend/dt : 0; /* fraction of a full deflection */
+    float v=(float)current-128.0f+push*128.0f;
     if (v>127.0f) v=127.0f;
     if (v<-128.0f) v=-128.0f;
     return (uint8_t)(int)(v+128.0f);
@@ -126,9 +155,11 @@ static uint8_t mouse_axis(uint8_t current, float delta, int aiming) {
 static void sample_keyboard_mouse(PadData *d, const bool *k) {
     if (k) {
         static const struct { SDL_Scancode key; uint32_t ps; } keys[]={
-            {SDL_SCANCODE_SPACE,BTN_CROSS}, {SDL_SCANCODE_LSHIFT,BTN_CIRCLE}, {SDL_SCANCODE_E,BTN_SQUARE},
-            {SDL_SCANCODE_Q,BTN_TRIANGLE}, {SDL_SCANCODE_1,BTN_L1}, {SDL_SCANCODE_3,BTN_R1},
-            {SDL_SCANCODE_R,BTN_L2}, {SDL_SCANCODE_F,BTN_R2}, {SDL_SCANCODE_Z,BTN_L3}, {SDL_SCANCODE_C,BTN_R3},
+            {SDL_SCANCODE_SPACE,BTN_CROSS}, {SDL_SCANCODE_E,BTN_CROSS},
+            {SDL_SCANCODE_LCTRL,BTN_CIRCLE}, {SDL_SCANCODE_C,BTN_CIRCLE}, {SDL_SCANCODE_LSHIFT,BTN_L3},
+            {SDL_SCANCODE_R,BTN_SQUARE}, {SDL_SCANCODE_V,BTN_R3},
+            {SDL_SCANCODE_Q,BTN_TRIANGLE}, {SDL_SCANCODE_1,BTN_TRIANGLE}, {SDL_SCANCODE_2,BTN_TRIANGLE},
+            {SDL_SCANCODE_G,BTN_R1}, {SDL_SCANCODE_4,BTN_L1},
             {SDL_SCANCODE_RETURN,BTN_OPTIONS}, {SDL_SCANCODE_ESCAPE,BTN_OPTIONS},
             {SDL_SCANCODE_I,BTN_UP}, {SDL_SCANCODE_K,BTN_DOWN}, {SDL_SCANCODE_J,BTN_LEFT}, {SDL_SCANCODE_L,BTN_RIGHT},
         };
@@ -146,9 +177,25 @@ static void sample_keyboard_mouse(PadData *d, const bool *k) {
         if (mouse & SDL_BUTTON_LMASK) d->buttons|=BTN_R2;
         if (mouse & SDL_BUTTON_RMASK) d->buttons|=BTN_L2;
         const int aiming=(d->buttons & BTN_L2)!=0 || d->l2>30;
-        d->right_x=mouse_axis(d->right_x,dx,aiming);
-        d->right_y=mouse_axis(d->right_y,dy,aiming);
+        static float sens=-1.0f;
+        static MouseLook look_x, look_y;
+        static uint64_t last;
+        if (sens<0) sens=env_float("BB_MOUSE_SENS",6.0f);
+        const uint64_t t=now_us();
+        float dt=last ? (float)(t-last)/1e6f : 0.0f;
+        if (dt>0.1f) dt=0.1f;
+        last=t;
+        if (aiming) {
+            look_x=look_y=(MouseLook){0};
+            d->right_x=mouse_axis(d->right_x,dx,sens);
+            d->right_y=mouse_axis(d->right_y,dy,sens);
+        } else {
+            d->right_x=mouse_look(d->right_x,&look_x,dx,dt);
+            d->right_y=mouse_look(d->right_y,&look_y,dy,dt);
+        }
         if (mouse & SDL_BUTTON_MMASK) d->buttons|=BTN_R3;
+        if (mouse & SDL_BUTTON_X1MASK) d->buttons|=BTN_L1;
+        if (mouse & SDL_BUTTON_X2MASK) d->buttons|=BTN_R1;
     }
     if (d->buttons & BTN_L2) d->l2=255;
     if (d->buttons & BTN_R2) d->r2=255;

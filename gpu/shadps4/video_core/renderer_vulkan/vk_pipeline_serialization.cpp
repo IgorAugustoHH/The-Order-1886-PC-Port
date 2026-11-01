@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
+#include <atomic>
+#include <cstring>
+#include <iterator>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -54,6 +57,64 @@ u64 PermutationContentKey(u64 pgm_hash, const Shader::StageSpecialization& spec,
                      (u64{reader_revision} << 16);
     return XXH3_64bits_withSeed(bytes.data(), bytes.size(), seed) | 1; // never 0
 }
+
+// TOport measurement for the shared pipeline map (BB_PIPELINE_MAP=<file from the exporter>):
+// every pipeline this session builds new is looked up in the map by its stored name. The hit
+// rate says whether names match across machines and installs before anything is prebuilt.
+std::once_flag g_map_once;
+std::unordered_set<u64> g_map_names;
+std::atomic<u32> g_map_checked{0}, g_map_hits{0};
+
+void LoadMapNames() {
+    const char* path = std::getenv("BB_PIPELINE_MAP");
+    if (!path || !*path) {
+        return;
+    }
+    std::ifstream file{path, std::ios::binary};
+    std::vector<u8> d{std::istreambuf_iterator<char>(file), {}};
+    if (d.size() < 12 || std::memcmp(d.data(), "TOPM", 4) != 0) {
+        std::printf("Pipeline map: %s not readable\n", path);
+        return;
+    }
+    u32 count{};
+    std::memcpy(&count, d.data() + 8, 4);
+    size_t o = 12;
+    for (u32 i = 0; i < count && o + 4 <= d.size(); ++i) {
+        u32 key_size{}, is_compute{}, stages{};
+        std::memcpy(&key_size, d.data() + o, 4);
+        const u8* blob = d.data() + o + 4;
+        std::memcpy(&is_compute, blob + 4, 4);
+        if (is_compute) {
+            u64 value{};
+            std::memcpy(&value, blob + 8, 8);
+            g_map_names.insert(value);
+        } else {
+            g_map_names.insert(XXH3_64bits(blob + 8, sizeof(GraphicsPipelineKey)));
+        }
+        o += 4 + key_size;
+        std::memcpy(&stages, d.data() + o, 4);
+        o += 4;
+        for (u32 st = 0; st < stages; ++st) {
+            u32 spec_size{};
+            std::memcpy(&spec_size, d.data() + o + 16, 4);
+            o += 20 + spec_size;
+        }
+    }
+    std::printf("Pipeline map: %zu pipeline names loaded from %s\n", g_map_names.size(), path);
+}
+
+void NoteMapMatch(u64 name) {
+    std::call_once(g_map_once, LoadMapNames);
+    if (g_map_names.empty() || !name) {
+        return;
+    }
+    const u32 checked = ++g_map_checked;
+    const u32 hits = g_map_names.contains(name) ? ++g_map_hits : g_map_hits.load();
+    if (checked % 100 == 0) {
+        std::printf("Pipeline map: %u of %u new pipelines were in the map (%.1f%%)\n", hits,
+                    checked, 100.0 * hits / checked);
+    }
+}
 } // namespace
 
 
@@ -81,6 +142,7 @@ u64 RegisterPipelineData(const ComputePipelineKey& key,
 
     Storage::DataBase::Instance().Save(Storage::BlobType::PipelineKey,
                                        fmt::format("c_{:#018x}", stored.value), ar.TakeOff());
+    NoteMapMatch(stored.value);
     return stored.value;
 }
 
@@ -111,6 +173,7 @@ u64 RegisterPipelineData(const GraphicsPipelineKey& key, u64 hash,
 
     Storage::DataBase::Instance().Save(Storage::BlobType::PipelineKey,
                                        fmt::format("g_{:#018x}", name), ar.TakeOff());
+    NoteMapMatch(name);
     return name;
 }
 
@@ -174,7 +237,7 @@ void RegisterShaderBinary(std::vector<u32>&& spv, u64 content_key) {
                                        fmt::format("{:#018x}_c", content_key), std::move(spv));
 }
 
-bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
+static bool LoadShaderMetaUnchecked(Serialization::Archive& ar, Shader::Info& info,
                     std::optional<Shader::Gcn::FetchShaderData>& fetch_shader_data,
                     Shader::StageSpecialization& spec, size_t& perm_idx) {
     Serialization::Reader meta{ar};
@@ -208,6 +271,31 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     return true;
 }
 
+// TOport: an old or damaged blob can make the reader throw (bitset or vector sizes); such a
+// stage is treated as missing (translated on first use) instead of ending the game.
+bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
+                    std::optional<Shader::Gcn::FetchShaderData>& fetch_shader_data,
+                    Shader::StageSpecialization& spec, size_t& perm_idx) {
+    // Read into copies: a blob that throws halfway must not leave the caller's program info
+    // half overwritten (that program is then translated again from its own state).
+    Shader::Info read_info = info;
+    std::optional<Shader::Gcn::FetchShaderData> read_fetch = fetch_shader_data;
+    Shader::StageSpecialization read_spec = spec;
+    size_t read_idx = perm_idx;
+    try {
+        if (!LoadShaderMetaUnchecked(ar, read_info, read_fetch, read_spec, read_idx)) {
+            return false;
+        }
+    } catch (...) {
+        return false;
+    }
+    info = std::move(read_info);
+    fetch_shader_data = std::move(read_fetch);
+    spec = std::move(read_spec);
+    perm_idx = read_idx;
+    return true;
+}
+
 void ComputePipelineKey::Serialize(Serialization::Archive& ar) const {
     Serialization::Writer key{ar};
     key.Write(value);
@@ -227,6 +315,123 @@ void ComputePipeline::SerializationSupport::Serialize(Serialization::Archive& ar
 bool ComputePipeline::SerializationSupport::Deserialize(Serialization::Archive& ar) {
     // Nothing here yet
     return true;
+}
+
+
+// TOport: BB_EXPORT_PIPELINE_MAP=<file> writes the pipeline map shared with other players: every
+// stored pipeline key (render state, vertex layout, stage content keys) and, per stage, the
+// program hash and its specialization. No SPIR-V, no shader code and no user data from the game:
+// each player translates the programs from their own dump.
+// File: "TOPM" u32 version, u32 entries; per entry: u32 key_size, key blob (as stored), u32
+// stages; per stage: u64 content_key, u64 pgm_hash, u32 spec_size, spec blob.
+static void ExportPipelineMap(const char* out_path) {
+    std::FILE* out = std::fopen(out_path, "wb");
+    if (!out) {
+        std::fprintf(stderr, "Pipeline map: cannot write %s\n", out_path);
+        return;
+    }
+    const auto put = [&](const void* data, size_t size) { std::fwrite(data, 1, size, out); };
+    const u32 version = 1;
+    u32 entries = 0, complete = 0, no_meta = 0, old_version = 0, damaged = 0, motion_stages = 0;
+    put("TOPM", 4);
+    put(&version, 4);
+    put(&entries, 4); // rewritten at the end
+    Storage::DataBase::Instance().ForEachBlobNamed(
+        Storage::BlobType::PipelineKey, [&](const std::string&, std::vector<u8>&& data) {
+            Serialization::Archive ar{std::vector<u8>(data)};
+            Serialization::Reader reader{ar};
+            u32 key_version{}, is_compute{};
+            reader.Read(key_version);
+            if (key_version != Serialization::PipelineKeyVersion) {
+                return;
+            }
+            reader.Read(is_compute);
+            std::vector<u64> stages;
+            if (is_compute) {
+                ComputePipelineKey key{};
+                key.Deserialize(ar);
+                stages.push_back(key.value);
+            } else {
+                GraphicsPipelineKey key{};
+                key.Deserialize(ar);
+                for (const u64 hash : key.stage_hashes) {
+                    if (hash) {
+                        stages.push_back(hash);
+                    }
+                }
+            }
+            std::vector<std::pair<u64, std::vector<u8>>> specs; // pgm_hash, spec blob
+            for (const u64 content : stages) {
+                std::vector<u8> meta_blob;
+                Storage::DataBase::Instance().Load(Storage::BlobType::ShaderMeta,
+                                                   fmt::format("{:#018x}", content), meta_blob);
+                Shader::Info info{};
+                std::optional<Shader::Gcn::FetchShaderData> fetch;
+                Shader::StageSpecialization spec{};
+                size_t perm_idx{};
+                if (meta_blob.empty()) {
+                    ++no_meta;
+                    return;
+                }
+                // Read like LoadShaderMeta, but motion-vector vertex shaders are kept: their
+                // specialization does not depend on the session's buffer addresses.
+                Serialization::Archive meta_ar{std::move(meta_blob)};
+                try {
+                    Serialization::Reader meta{meta_ar};
+                    u32 meta_version{}, binary_version{};
+                    u64 stored_key{};
+                    meta.Read(meta_version);
+                    meta.Read(binary_version);
+                    if ((meta_version != Serialization::ShaderMetaVersion && meta_version != 12u) ||
+                        binary_version != Serialization::ShaderBinaryVersion) {
+                        ++old_version;
+                        return;
+                    }
+                    meta.Read(stored_key);
+                    meta.Read(perm_idx);
+                    spec.Deserialize(meta_ar);
+                    // Only the persistent part (program hash, stage): Info::Deserialize would also
+                    // register the SRT walker code in the never-freed 128 MB code buffer, which
+                    // thousands of reads exhaust ("code is too big") for the running game too.
+                    meta.Read(&info, sizeof(Shader::InfoPersistent));
+                } catch (const std::exception& e) {
+                    if (damaged++ < 3) {
+                        std::printf("Pipeline map: stage %#018llx unreadable: %s\n",
+                                    (unsigned long long)content, e.what());
+                    }
+                    return;
+                } catch (...) {
+                    ++damaged;
+                    return;
+                }
+                if (info.hw_stage == Shader::HwStage::Vertex && spec.runtime_info.hw.vs.motion_vectors) {
+                    ++motion_stages;
+                }
+                Serialization::Archive spec_ar{};
+                spec.Serialize(spec_ar);
+                specs.emplace_back(info.pgm_hash, spec_ar.TakeOff());
+            }
+            const u32 key_size = u32(data.size()), count = u32(stages.size());
+            put(&key_size, 4);
+            put(data.data(), data.size());
+            put(&count, 4);
+            for (size_t i = 0; i < stages.size(); ++i) {
+                const u32 spec_size = u32(specs[i].second.size());
+                put(&stages[i], 8);
+                put(&specs[i].first, 8);
+                put(&spec_size, 4);
+                put(specs[i].second.data(), spec_size);
+            }
+            ++entries;
+            ++complete;
+        });
+    std::fseek(out, 8, SEEK_SET);
+    put(&entries, 4);
+    std::fclose(out);
+    std::printf("Pipeline map: %u pipelines written to %s (%u motion-vector stages included); "
+                "skipped: %u stage without metadata, %u old cache version, %u damaged\n",
+                complete, out_path, motion_stages, no_meta, old_version, damaged);
+    std::fflush(stdout);
 }
 
 bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
@@ -939,6 +1144,15 @@ void PipelineCache::WarmUp() {
     }
 
     LoadRecentPipelines();
+    // Exported 60 s after start, once the preload and the menu are done, on its own thread.
+    if (const char* map_path = std::getenv("BB_EXPORT_PIPELINE_MAP"); map_path && *map_path) {
+        std::thread{[path = std::string{map_path}] {
+            std::this_thread::sleep_for(std::chrono::seconds(60));
+            std::printf("Pipeline map: export started\n");
+            std::fflush(stdout);
+            ExportPipelineMap(path.c_str());
+        }}.detach();
+    }
     // Diagnostic: keep the persistent cache open, but defer startup loading.
     // Do not remove or clear any shader/driver cache files.
     if (const char* preload = std::getenv("BB_PRELOAD_PIPELINES");

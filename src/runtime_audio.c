@@ -31,6 +31,7 @@
 
 typedef struct {
     int used, type, channels, is_float, frames, sample_bytes, std_layout;
+    int stereo;                     /* 7.1 port downmixed here to a stereo device */
     int32_t volume[8];
     SDL_AudioStream *stream;
     uint64_t next_deadline_ns; /* next return of sceAudioOutOutput */
@@ -115,7 +116,16 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
     p->sample_bytes=p->is_float ? 4 : 2; p->frames=(int)length; p->std_layout=format>=6;
     for (int c=0;c<8;++c) p->volume[c]=VOLUME_0DB;
     if (sdl_audio()) {
-        SDL_AudioSpec spec={p->is_float ? SDL_AUDIO_F32 : SDL_AUDIO_S16, p->channels, 48000};
+        /* BB_AUDIO_STEREO: auto (default) downmixes 7.1 ports here when the device is stereo;
+           SDL's own matrix keeps only ~0.21 of the fronts, so the game sounds far too quiet.
+           1 forces the downmix, 0 leaves it to SDL. */
+        const char *mode=getenv("BB_AUDIO_STEREO");
+        if (p->channels==8 && !(mode && mode[0]=='0')) {
+            SDL_AudioSpec device;
+            p->stereo=(mode && mode[0]=='1') ||
+                      (SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&device,NULL) && device.channels==2);
+        }
+        SDL_AudioSpec spec={p->is_float ? SDL_AUDIO_F32 : SDL_AUDIO_S16, p->stereo ? 2 : p->channels, 48000};
         p->stream=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,NULL,NULL);
         if (p->stream) SDL_ResumeAudioStreamDevice(p->stream);
         else fprintf(stderr,"Runtime: SDL audio stream failed (%s); port %d uses the timer sink\n",SDL_GetError(),id);
@@ -129,7 +139,8 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
     }
     ++ports_opened;
     pthread_mutex_unlock(&table_lock);
-    printf("Runtime: audio port %d opened (type %d, %d ch, %s, %u frames)\n",id,type,p->channels,p->is_float ? "float" : "s16",length);
+    printf("Runtime: audio port %d opened (type %d, %d ch, %s, %u frames%s)\n",id,type,p->channels,p->is_float ? "float" : "s16",length,
+           p->stereo ? ", downmixed to stereo" : "");
     return (type<<16) | id | 0x20000000;
 }
 static ABI int32_t audio_close(int32_t handle) {
@@ -156,7 +167,8 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
     if (!p) return error;
     pthread_mutex_lock(&p->lock);
     size_t samples=(size_t)p->frames*(size_t)p->channels, bytes=samples*(size_t)p->sample_bytes;
-    uint64_t period=(uint64_t)p->frames*1000000000u/48000u;
+    uint64_t period=(uint64_t)((double)p->frames*1e9/48000.0/runtime_timescale());
+    const int fast=runtime_timescale()!=1.0; /* benchmark speed-up: paced faster, not played */
     if (data) {
         /* Apply per-channel volume and map PS4 8ch (L R C LFE SL SR BL BR) to SDL 7.1 order. */
         unsigned char converted[2048*8*4];
@@ -169,6 +181,28 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             else { int16_t v; memcpy(&v,(const char *)data+from*2,2); v=(int16_t)((float)v*gain); memcpy(converted+to*2,&v,2); }
         }
         if (p->dump) fwrite(converted,1,bytes,p->dump);
+        size_t out_bytes=bytes;
+        if (p->stereo) {
+            /* SDL 7.1 order: FL FR FC LFE BL BR SL SR. Fronts at full level, center and
+               surrounds at -3 dB, LFE dropped, clamped. Written in place: frame f's output
+               never overlaps a later frame's input. */
+            const float k=0.70710678f;
+            for (size_t f=0;f<(size_t)p->frames;++f) {
+                float in[8], out[2];
+                for (int c=0;c<8;++c) {
+                    if (p->is_float) memcpy(&in[c],converted+(f*8+(size_t)c)*4,4);
+                    else { int16_t v; memcpy(&v,converted+(f*8+(size_t)c)*2,2); in[c]=v/32768.0f; }
+                }
+                out[0]=in[0]+k*(in[2]+in[4]+in[6]);
+                out[1]=in[1]+k*(in[2]+in[5]+in[7]);
+                for (int c=0;c<2;++c) {
+                    float v=out[c]>1.0f ? 1.0f : out[c]<-1.0f ? -1.0f : out[c];
+                    if (p->is_float) memcpy(converted+(f*2+(size_t)c)*4,&v,4);
+                    else { int16_t w=(int16_t)(v*32767.0f); memcpy(converted+(f*2+(size_t)c)*2,&w,2); }
+                }
+            }
+            out_bytes=(size_t)p->frames*2u*(size_t)p->sample_bytes;
+        }
         if (p->stats) {
             uint64_t now=now_ns();
             if (!p->stat_start_ns) { p->stat_start_ns=now; p->stat_min_queued=1<<30; }
@@ -192,22 +226,22 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             else sleep_until(p->next_deadline_ns);
             p->next_deadline_ns+=period;
         }
-        if (p->stream) {
+        if (p->stream && !fast) {
             /* The device drains the queue in quanta (21 ms on PipeWire), so the level
                is a sawtooth: its minimum over ~32 buffers is what gets controlled. */
-            int low=2*(int)bytes, queued=SDL_GetAudioStreamQueued(p->stream);
-            if (queued<(int)bytes) {
+            int low=2*(int)out_bytes, queued=SDL_GetAudioStreamQueued(p->stream);
+            if (queued<(int)out_bytes) {
                 static const unsigned char silence[2048*8*4];
-                SDL_PutAudioStreamData(p->stream,silence,low-queued<(int)bytes ? low-queued : (int)bytes);
+                SDL_PutAudioStreamData(p->stream,silence,low-queued<(int)out_bytes ? low-queued : (int)out_bytes);
                 queued=low;
             }
             if (!p->window_count || queued<p->window_min) p->window_min=queued;
             if (++p->window_count==32) {
-                p->adjust_ns=p->window_min>low+2*(int)bytes ? (int64_t)(period/32) : p->window_min<low ? -(int64_t)(period/32) : 0;
+                p->adjust_ns=p->window_min>low+2*(int)out_bytes ? (int64_t)(period/32) : p->window_min<low ? -(int64_t)(period/32) : 0;
                 p->window_count=0;
             }
             p->next_deadline_ns+=(uint64_t)p->adjust_ns;
-            SDL_PutAudioStreamData(p->stream,converted,(int)bytes);
+            SDL_PutAudioStreamData(p->stream,converted,(int)out_bytes);
         }
         ++buffers_out;
     }

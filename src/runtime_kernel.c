@@ -44,6 +44,28 @@ static int32_t fail_posix(int e) { *runtime_errno()=runtime_guest_errno(e); retu
 /* ---- clocks and sleeping ---- */
 static struct timespec process_start;
 __attribute__((constructor)) static void remember_start(void) { clock_gettime(CLOCK_MONOTONIC,&process_start); }
+double runtime_timescale(void) {
+    static double scale=0;
+    if (scale==0) {
+        const char *e=getenv("BB_TIMESCALE");
+        double v=e && *e ? atof(e) : 1.0;
+        scale=v<1.0 ? 1.0 : v>8.0 ? 8.0 : v;
+        if (scale!=1.0) fprintf(stderr,"Benchmark: guest time runs %.2fx\n",scale);
+    }
+    return scale;
+}
+/* Elapsed host time since the process started, stretched by the time scale. */
+static void scale_time(struct timespec *t, int realtime) {
+    const double scale=runtime_timescale();
+    if (scale==1.0) return;
+    static struct timespec real_start;
+    if (realtime && !real_start.tv_sec) clock_gettime(CLOCK_REALTIME,&real_start);
+    const struct timespec *base=realtime ? &real_start : &process_start;
+    int64_t ns=(int64_t)(t->tv_sec-base->tv_sec)*1000000000+(t->tv_nsec-base->tv_nsec);
+    ns=(int64_t)((double)ns*scale);
+    t->tv_sec=base->tv_sec+(time_t)(ns/1000000000); t->tv_nsec=base->tv_nsec+(long)(ns%1000000000);
+    if (t->tv_nsec>=1000000000) { t->tv_nsec-=1000000000; ++t->tv_sec; }
+}
 static int host_clock(uint32_t id,clockid_t *out) {
     switch (id) {
     case 0: case 9: case 10: *out=CLOCK_REALTIME; return 1;            /* REALTIME(_PRECISE/_FAST) */
@@ -60,6 +82,7 @@ static int clock_read(uint32_t id,GuestTimespec *ts) {
     if (!ts || !host_clock(id,&host)) return EINVAL;
     struct timespec t;
     if (clock_gettime(host,&t)) return errno;
+    if (host==CLOCK_MONOTONIC || host==CLOCK_REALTIME) scale_time(&t,host==CLOCK_REALTIME);
     if (id==13) t.tv_nsec=0;
     ts->sec=t.tv_sec; ts->nsec=t.tv_nsec; return 0;
 }
@@ -77,15 +100,21 @@ static ABI int32_t posix_clock_getres(uint32_t id,GuestTimespec *ts) {
     return 0;
 }
 static ABI uint64_t process_time(void) {
-    struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); scale_time(&t,0);
     return (uint64_t)(t.tv_sec-process_start.tv_sec)*1000000+(uint64_t)((t.tv_nsec-process_start.tv_nsec)/1000);
 }
 static ABI uint64_t process_time_counter(void) {
-    struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); scale_time(&t,0);
     return (uint64_t)(t.tv_sec-process_start.tv_sec)*1000000000+(uint64_t)(t.tv_nsec-process_start.tv_nsec);
 }
 static ABI uint64_t process_time_frequency(void) { return 1000000000; }
-static ABI uint64_t read_tsc(void) { return __rdtsc(); }
+static ABI uint64_t read_tsc(void) {
+    const double scale=runtime_timescale();
+    if (scale==1.0) return __rdtsc();
+    static uint64_t tsc_start;
+    if (!tsc_start) tsc_start=__rdtsc();
+    return tsc_start+(uint64_t)((double)(__rdtsc()-tsc_start)*scale);
+}
 static uint64_t tsc_hz;
 static ABI uint64_t tsc_frequency(void) {
     if (!tsc_hz) {
@@ -136,6 +165,7 @@ void runtime_relax(void) {
     last=relax_now();
 }
 static int sleep_ns(uint64_t ns) {
+    ns=(uint64_t)((double)ns/runtime_timescale());
     if (ns<50000) { runtime_relax(); return 0; } /* sleep(0)/usleep(<50 us): a yield */
 #ifdef _WIN32
     compat_sleep_ns(ns);
